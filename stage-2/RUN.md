@@ -1,10 +1,10 @@
-# Running the Stage 1 service
+# Running the Stage 2 service
 
 Build and start the container (no manual setup required):
 
 ```sh
-docker build -t pocketful-stage1 .
-docker run --rm -e PORT=8080 -p 8080:8080 pocketful-stage1
+docker build -t pocketful-stage2 .
+docker run --rm -e PORT=8080 -p 8080:8080 pocketful-stage2
 ```
 
 The service listens on `0.0.0.0:${PORT}` (default `8080`).
