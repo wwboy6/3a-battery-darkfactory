@@ -508,8 +508,12 @@ async def create_settlement(request: Request):
             return replay
         if user.id not in store.operators:
             raise ApiError(403, "forbidden", "not a settlement operator")
-        transfers = body.get("transfers")
-        if not isinstance(transfers, list) or not 1 <= len(transfers) <= 32:
+        if "transfers" not in body:
+            raise ApiError(422, "validation_failed", "transfers is required")
+        transfers = body["transfers"]
+        if not isinstance(transfers, list):
+            raise ApiError(400, "malformed_request", "transfers must be a list")
+        if not 1 <= len(transfers) <= 32:
             raise ApiError(422, "validation_failed", "transfers must contain 1 to 32 entries")
         parsed = []
         for transfer in transfers:

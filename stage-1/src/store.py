@@ -473,7 +473,7 @@ class Store:
     def payment_json(self, payment):
         from_user = self.users.get(payment.from_user_id)
         to_user = self.users.get(payment.to_user_id)
-        return {
+        result = {
             "payment_id": payment.id,
             "from_user_id": payment.from_user_id,
             "from_handle": from_user.handle if from_user else None,
@@ -484,9 +484,11 @@ class Store:
             "note": payment.note,
             "visibility": payment.visibility,
             "request_id": payment.request_id,
-            "settlement_id": payment.settlement_id,
             "created_at": payment.created_at,
         }
+        if payment.settlement_id is not None:
+            result["settlement_id"] = payment.settlement_id
+        return result
 
     def request_json(self, request):
         requester = self.users.get(request.requester_id)
