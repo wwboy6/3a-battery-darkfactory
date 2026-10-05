@@ -15,8 +15,7 @@ Track: Pocketful
 - mandates/          - one .md per seat, named after the seat, at least three; each
                      names the seat's harness and model
 - room.json          - the room, downloaded from Band
-- result/
-  - stage-1/         - factory result for stage, with Dockerfile, RUN.md, source
-  - stage-2/
-  - stage-3/
-  - stage-4/
+- stage-1/         - factory result for stage, with Dockerfile, RUN.md, source
+- stage-2/
+- stage-3/
+- stage-4/
