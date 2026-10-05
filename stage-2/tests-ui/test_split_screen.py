@@ -23,9 +23,9 @@ def test_preview_matches_server_shares(signed_in):
     page = signed_in("ada")
     page.goto("/split")
     _fill_split(page, "10.00", "ada,bob,cy")
-    expect(page.get_by_test_id("split-share-ada")).to_have_text("4.00 EUR")
-    expect(page.get_by_test_id("split-share-bob")).to_have_text("3.00 EUR")
-    expect(page.get_by_test_id("split-share-cy")).to_have_text("3.00 EUR")
+    expect(page.get_by_test_id("split-share-ada")).to_have_text("3.34 EUR")
+    expect(page.get_by_test_id("split-share-bob")).to_have_text("3.33 EUR")
+    expect(page.get_by_test_id("split-share-cy")).to_have_text("3.33 EUR")
     preview = {handle: _preview(page, handle) for handle in ("ada", "bob", "cy")}
 
     with page.expect_response(_is_split_post) as info:
@@ -33,17 +33,17 @@ def test_preview_matches_server_shares(signed_in):
     body = payload(info.value)
     assert body["amount"] == 1000
     shares = {share["handle"]: share["amount"] for share in body["shares"]}
-    assert shares == {"ada": 400, "bob": 300, "cy": 300}
-    assert preview == {"ada": "4.00 EUR", "bob": "3.00 EUR", "cy": "3.00 EUR"}
+    assert shares == {"ada": 334, "bob": 333, "cy": 333}
+    assert preview == {"ada": "3.34 EUR", "bob": "3.33 EUR", "cy": "3.33 EUR"}
 
 
 def test_extra_minor_unit_goes_to_first_participant_in_order(signed_in):
     page = signed_in("ada")
     page.goto("/split")
     _fill_split(page, "10.00", "cy,bob,ada")
-    expect(page.get_by_test_id("split-share-cy")).to_have_text("4.00 EUR")
-    expect(page.get_by_test_id("split-share-bob")).to_have_text("3.00 EUR")
-    expect(page.get_by_test_id("split-share-ada")).to_have_text("3.00 EUR")
+    expect(page.get_by_test_id("split-share-cy")).to_have_text("3.34 EUR")
+    expect(page.get_by_test_id("split-share-bob")).to_have_text("3.33 EUR")
+    expect(page.get_by_test_id("split-share-ada")).to_have_text("3.33 EUR")
 
 
 def test_uneven_division_of_999(signed_in):
