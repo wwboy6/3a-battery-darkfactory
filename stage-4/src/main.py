@@ -1049,7 +1049,7 @@ async def correction_batch(request: Request):
         if corrections is None:
             raise ApiError(422, "validation_failed", "corrections is required")
         if not isinstance(corrections, list):
-            raise ApiError(400, "malformed_request", "corrections must be a list")
+            raise ApiError(422, "validation_failed", "corrections must be a list")
         if not 1 <= len(corrections) <= 32:
             raise ApiError(422, "validation_failed", "corrections must contain 1 to 32 items")
         seen = set()
