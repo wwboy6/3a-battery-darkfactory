@@ -98,21 +98,21 @@ def test_unknown_query_parameters_are_ignored(api, tokens):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize(
-    "method,path,status,code",
-    [
-        ("get", "/me", 401, "unauthenticated"),
-        ("get", "/nonexistent", 404, "not_found"),
-    ],
-)
-def test_error_envelope_shape(api, tokens, method, path, status, code):
-    resp = api.get(path, token=tokens["ada"])
+def _assert_error_envelope(resp, status, code):
     assert resp.status_code == status, resp.text
     body = payload(resp)
     assert set(body) == {"error"}
     assert set(body["error"]) >= {"code", "message"}
     assert body["error"]["code"] == code
     assert isinstance(body["error"]["message"], str) and body["error"]["message"]
+
+
+def test_error_envelope_shape_unauthenticated(api):
+    _assert_error_envelope(api.get("/me"), 401, "unauthenticated")
+
+
+def test_error_envelope_shape_not_found(api, ada_token):
+    _assert_error_envelope(api.get("/nonexistent", token=ada_token), 404, "not_found")
 
 
 def test_unparseable_body_is_malformed_request(api, tokens):

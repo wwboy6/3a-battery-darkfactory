@@ -74,11 +74,11 @@ def test_split_itself_is_not_a_feed_item(api, tokens):
 
 def test_activity_only_shows_visible_payments(api, tokens):
     public = payload(pay(api, tokens["ada"], "bob", 10, "public"))["payment_id"]
-    private = payload(pay(api, tokens["cy"], "bob", 10, "private"))["payment_id"]
+    private = payload(pay(api, tokens["bob"], "cy", 10, "private"))["payment_id"]
     ids = activity_ids(api, tokens["cy"])
-    assert private in ids
-    assert public in ids
-    # ada cannot see cy's private payment
+    assert public in ids  # cy sees ada's public payment
+    assert private in ids  # cy is the receiver of bob's private payment
+    # ada cannot see bob's private payment
     assert private not in activity_ids(api, tokens["ada"])
 
 

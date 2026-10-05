@@ -155,7 +155,7 @@ def test_pay_request_while_short_is_409_then_payable_after_topup(api, reset):
         )
     )
     tok = {h: payload(login(api, f"{h}@example.com"))["token"] for h in ("ada", "bob", "cy")}
-    rid = request_id_of(api, tok["bob"], payer="ada")
+    rid = payload(create_request(api, tok["bob"], payer_handle="ada", amount=500))["request_id"]
     expect(api.post(f"/requests/{rid}/pay", token=tok["ada"], idem=unique("pay"), body={}), 409, "insufficient_funds")
     # Money arrives later, then the same request becomes payable.
     expect(api.post("/payments", token=tok["cy"], idem=unique("pay"), body={"to_handle": "ada", "amount": 500}), 201)

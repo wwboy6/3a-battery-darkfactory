@@ -127,7 +127,7 @@ def test_claimed_key_resolved_before_field_validation(api, tokens):
 def test_key_is_scoped_per_user(api, tokens):
     key = unique("idem")
     expect(api.post("/payments", token=tokens["ada"], idem=key, body=pay_body(amount=10)), 201)
-    expect(api.post("/payments", token=tokens["cy"], idem=key, body=pay_body(amount=10)), 201)
+    expect(api.post("/payments", token=tokens["bob"], idem=key, body=pay_body("cy", 10)), 201)
 
 
 def test_same_key_different_path_is_not_a_replay(api, tokens):
@@ -144,8 +144,8 @@ def test_key_reusable_after_4xx_failure(api, tokens):
 
 def test_key_reusable_after_insufficient_funds(api, tokens):
     key = unique("idem")
-    expect(api.post("/payments", token=tokens["bob"], idem=key, body=pay_body(amount=2501)), 409, "insufficient_funds")
-    expect(api.post("/payments", token=tokens["bob"], idem=key, body=pay_body(amount=10)), 201)
+    expect(api.post("/payments", token=tokens["bob"], idem=key, body=pay_body("ada", 2501)), 409, "insufficient_funds")
+    expect(api.post("/payments", token=tokens["bob"], idem=key, body=pay_body("ada", 10)), 201)
 
 
 def test_replay_of_successful_request_pay_returns_payment_not_conflict(api, tokens):

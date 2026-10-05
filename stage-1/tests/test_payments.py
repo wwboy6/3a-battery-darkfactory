@@ -4,7 +4,7 @@ import pytest
 
 from support import assert_rfc3339, expect, payload, unique
 
-PAYMENT_FIELDS = {
+REQUIRED_PAYMENT_FIELDS = {
     "payment_id",
     "from_user_id",
     "from_handle",
@@ -17,6 +17,9 @@ PAYMENT_FIELDS = {
     "request_id",
     "created_at",
 }
+# §11 mentions settlement_id on payments; §8's body example omits it, so accept
+# it when present but require it to be null for an ordinary (non-settlement) payment.
+OPTIONAL_PAYMENT_FIELDS = {"settlement_id"}
 
 
 def pay(api, token, **body):
@@ -34,7 +37,9 @@ def test_payment_returns_documented_body_and_moves_money(api, tokens):
     resp = pay(api, tokens["ada"], amount=1500, note="dinner", visibility="public")
     expect(resp, 201)
     body = payload(resp)
-    assert set(body) == PAYMENT_FIELDS
+    assert REQUIRED_PAYMENT_FIELDS <= set(body)
+    assert set(body) <= REQUIRED_PAYMENT_FIELDS | OPTIONAL_PAYMENT_FIELDS
+    assert body.get("settlement_id") is None
     assert body["from_user_id"] == "u_ada" and body["from_handle"] == "ada"
     assert body["to_user_id"] == "u_bob" and body["to_handle"] == "bob"
     assert body["amount"] == 1500 and body["currency"] == "EUR"
@@ -53,7 +58,7 @@ def test_payment_defaults_note_empty_and_visibility_public(api, tokens):
 
 
 def test_payment_of_exact_balance_is_allowed(api, tokens):
-    expect(pay(api, tokens["bob"], amount=2500), 201)
+    expect(pay(api, tokens["bob"], to_handle="ada", amount=2500), 201)
     assert payload(api.get("/me", token=tokens["bob"]))["balance"] == 0
 
 
@@ -85,7 +90,7 @@ def test_payment_to_unknown_handle_is_404(api, tokens):
 
 
 def test_payment_insufficient_funds_is_409_and_leaves_no_trace(api, tokens):
-    resp = pay(api, tokens["bob"], amount=2501)
+    resp = pay(api, tokens["bob"], to_handle="ada", amount=2501)
     expect(resp, 409, "insufficient_funds")
     assert payload(api.get("/me", token=tokens["bob"]))["balance"] == 2500
     assert payload(api.get("/me", token=tokens["ada"]))["balance"] == 10000

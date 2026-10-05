@@ -89,8 +89,8 @@ def test_split_rounding_five_ways(api, reset):
 
 
 def test_split_order_determines_who_gets_the_extra_unit(api, tokens):
-    first = shares_of(split(api, tokens["ada"], amount=1000, participant_handles=["ada", "bob", "cy"]))
-    second = shares_of(split(api, tokens["ada"], amount=1000, participant_handles=["cy", "bob", "ada"]))
+    first = shares_of(payload(split(api, tokens["ada"], amount=1000, participant_handles=["ada", "bob", "cy"])))
+    second = shares_of(payload(split(api, tokens["ada"], amount=1000, participant_handles=["cy", "bob", "ada"])))
     assert first == {"ada": 334, "bob": 333, "cy": 333}
     assert second == {"cy": 334, "bob": 333, "ada": 333}
 
