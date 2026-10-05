@@ -198,4 +198,5 @@ def revision_json(revision):
         "effective_at": revision.effective_at,
         "recorded_at": revision.recorded_at,
         "reason": revision.reason,
+        "correction_batch_id": revision.correction_batch_id,
     }

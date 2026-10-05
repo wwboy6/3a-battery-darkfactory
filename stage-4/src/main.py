@@ -938,7 +938,11 @@ async def correct_payment(request: Request, payment_id: str):
             raise ApiError(404, "not_found", "no such payment")
         if payment.from_user_id != user.id:
             raise ApiError(403, "forbidden", "only the original sender may correct")
-        if payment.settlement_id is not None or payment.authorization_id is not None:
+        if (
+            payment.settlement_id is not None
+            or payment.authorization_id is not None
+            or payment.refund_of is not None
+        ):
             raise ApiError(422, "linked_payment_immutable", "linked payments cannot be corrected")
         expected_revision = as_int(required_key(body, "expected_revision"), "expected_revision")
         if expected_revision < 1:
@@ -988,6 +992,84 @@ async def list_revisions(request: Request, payment_id: str):
                 )
             ]
         return {"revisions": [revision_json(item) for item in revisions]}
+
+
+# --------------------------------------------------------------------------- #
+# Stage 4: refunds and correction batches
+# --------------------------------------------------------------------------- #
+
+
+@app.post("/payments/{payment_id}/refunds")
+async def refund_payment(request: Request, payment_id: str):
+    user = await authenticate(request)
+    key = idempotency_key(request)
+    body = await read_json_object(request)
+    path = request.url.path
+    async with store.lock:
+        user = current_user(user.id)
+        replay = replay_or_conflict(user.id, key, "POST", path, body)
+        if replay is not None:
+            return replay
+        target = store.payments.get(payment_id)
+        if target is None:
+            raise ApiError(404, "not_found", "no such payment")
+        if target.to_user_id != user.id:
+            raise ApiError(403, "forbidden", "only the original receiver may refund")
+        if target.refund_of is not None:
+            raise ApiError(422, "invalid_refund_target", "cannot refund a refund")
+        amount = as_int(required_key(body, "amount"), "amount")
+        if amount < 1 or amount > MAX_AMOUNT:
+            raise ApiError(422, "validation_failed", "amount out of range")
+        latest = store.latest_revision(target.id)
+        if store.refunded_total(target.id) + amount > latest.amount:
+            raise ApiError(422, "refund_exceeds_payment", "refund exceeds the payment amount")
+        receiver = store.users[target.to_user_id]
+        if store.available(receiver) < amount:
+            raise ApiError(409, "insufficient_funds", "insufficient funds")
+        refund = store.commit_refund(receiver, store.users[target.from_user_id], amount, target)
+        response = store.payment_json(refund)
+        store.idem_put(user.id, key, "POST", path, body, response, 201)
+    return JsonResponse(response, status_code=201)
+
+
+@app.post("/correction-batches")
+async def correction_batch(request: Request):
+    user = await authenticate(request)
+    key = idempotency_key(request)
+    body = await read_json_object(request)
+    path = request.url.path
+    async with store.lock:
+        user = current_user(user.id)
+        replay = replay_or_conflict(user.id, key, "POST", path, body)
+        if replay is not None:
+            return replay
+        if user.id not in store.operators:
+            raise ApiError(403, "forbidden", "not a settlement operator")
+        corrections = body.get("corrections")
+        if corrections is None:
+            raise ApiError(422, "validation_failed", "corrections is required")
+        if not isinstance(corrections, list):
+            raise ApiError(400, "malformed_request", "corrections must be a list")
+        if not 1 <= len(corrections) <= 32:
+            raise ApiError(422, "validation_failed", "corrections must contain 1 to 32 items")
+        seen = set()
+        for entry in corrections:
+            if not isinstance(entry, dict):
+                raise ApiError(422, "validation_failed", "invalid correction item")
+            payment_id = entry.get("payment_id")
+            if not isinstance(payment_id, str) or not payment_id:
+                raise ApiError(422, "validation_failed", "payment_id is required")
+            if payment_id in seen:
+                raise ApiError(422, "validation_failed", "payment_ids must be distinct")
+            seen.add(payment_id)
+        batch_id, recorded_at, revisions = store.apply_correction_batch(corrections)
+        response = {
+            "correction_batch_id": batch_id,
+            "recorded_at": recorded_at,
+            "revisions": revisions,
+        }
+        store.idem_put(user.id, key, "POST", path, body, response, 201)
+    return JsonResponse(response, status_code=201)
 
 
 # --------------------------------------------------------------------------- #

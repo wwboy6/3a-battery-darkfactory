@@ -12,14 +12,17 @@ from ledger import (
     historical_overdraft,
     next_recorded_at,
     now_iso,
+    parse_instant,
     parse_ts,
     remaining_amount,
+    revision_json,
     selected_map,
     total_for,
 )
 from models import (
     ApiError,
     Authorization,
+    CorrectionBatch,
     IdempotencyRecord,
     Payment,
     Request,
@@ -71,6 +74,7 @@ def _empty_state():
         "idem": {},
         "revisions": {},
         "snapshots": {},
+        "correction_batches": {},
     }
 
 
@@ -180,6 +184,7 @@ def build_reset_state(fixture):
             settlement_id=entry.get("settlement_id"),
             created_at=created_at,
             authorization_id=entry.get("authorization_id"),
+            refund_of=entry.get("refund_of"),
         )
         state["payment_ids"].append(pid)
         state["revisions"][pid] = [
@@ -418,6 +423,7 @@ def _state_from_export(data):
             settlement_id=entry.get("settlement_id"),
             created_at=created_at,
             authorization_id=entry.get("authorization_id"),
+            refund_of=entry.get("refund_of"),
         )
 
     raw_revisions = data.get("revisions")
@@ -437,6 +443,7 @@ def _state_from_export(data):
             reason = entry.get("reason", "")
             if not isinstance(effective_at, str) or not isinstance(recorded_at, str) or not isinstance(reason, str):
                 raise ApiError(422, "validation_failed", "invalid revision")
+            batch_id = entry.get("correction_batch_id")
             state["revisions"].setdefault(pid, []).append(
                 Revision(
                     revision=number,
@@ -444,6 +451,7 @@ def _state_from_export(data):
                     effective_at=effective_at,
                     recorded_at=recorded_at,
                     reason=reason,
+                    correction_batch_id=batch_id if isinstance(batch_id, str) else None,
                 )
             )
     for pid, payment in state["payments"].items():
@@ -577,6 +585,42 @@ def _state_from_export(data):
             status=entry.get("status"),
         )
 
+    for entry in data.get("correction_batches", []) or []:
+        if not isinstance(entry, dict):
+            raise ApiError(422, "validation_failed", "invalid correction batch")
+        bid = _require(entry, "id")
+        recorded_at = _require(entry, "recorded_at")
+        members = entry.get("members", [])
+        if not isinstance(bid, str) or not isinstance(recorded_at, str) or not isinstance(members, list):
+            raise ApiError(422, "validation_failed", "invalid correction batch")
+        clean_members = []
+        for member in members:
+            if not isinstance(member, dict):
+                raise ApiError(422, "validation_failed", "invalid correction batch member")
+            mid = member.get("payment_id")
+            number = member.get("revision")
+            if not isinstance(mid, str) or isinstance(number, bool) or not isinstance(number, int):
+                raise ApiError(422, "validation_failed", "invalid correction batch member")
+            clean_members.append({"payment_id": mid, "revision": number})
+        state["correction_batches"][bid] = CorrectionBatch(
+            id=bid, recorded_at=recorded_at, members=clean_members
+        )
+
+    for entry in data.get("snapshots", []) or []:
+        if not isinstance(entry, dict):
+            raise ApiError(422, "validation_failed", "invalid snapshot")
+        token = entry.get("token")
+        user_id = entry.get("user_id")
+        entries = entry.get("entries")
+        if not isinstance(token, str) or not token or not isinstance(user_id, str) or not isinstance(entries, list):
+            raise ApiError(422, "validation_failed", "invalid snapshot")
+        state["snapshots"][token] = {
+            "user_id": user_id,
+            "opening_balance": as_int(entry.get("opening_balance"), "opening_balance"),
+            "closing_balance": as_int(entry.get("closing_balance"), "closing_balance"),
+            "entries": entries,
+        }
+
     state["payment_ids"] = _ordered_ids(data.get("payment_order"), state["payments"])
     state["request_ids"] = _ordered_ids(data.get("request_order"), state["requests"])
     state["authorization_ids"] = _ordered_ids(data.get("authorization_order"), state["authorizations"])
@@ -621,6 +665,7 @@ class Store:
         self.idem = state["idem"]
         self.revisions = state["revisions"]
         self.snapshots = state["snapshots"]
+        self.correction_batches = state["correction_batches"]
 
     # ---- holds / availability (caller holds the lock) ----
     def effective_status(self, authorization):
@@ -721,7 +766,7 @@ class Store:
         self.authorization_ids.append(aid)
         return authorization
 
-    def commit_payment(self, from_user, to_user, amount, note, visibility, request_id=None, settlement_id=None, created_at=None, authorization_id=None):
+    def commit_payment(self, from_user, to_user, amount, note, visibility, request_id=None, settlement_id=None, created_at=None, authorization_id=None, refund_of=None):
         pid = self.gen_id("p_")
         payment = Payment(
             id=pid,
@@ -735,6 +780,7 @@ class Store:
             settlement_id=settlement_id,
             created_at=created_at or now_iso(),
             authorization_id=authorization_id,
+            refund_of=refund_of,
         )
         self.payments[pid] = payment
         self.payment_ids.append(pid)
@@ -778,6 +824,7 @@ class Store:
             "visibility": payment.visibility,
             "request_id": payment.request_id,
             "authorization_id": payment.authorization_id,
+            "refund_of": payment.refund_of,
             "created_at": payment.created_at,
         }
         if payment.settlement_id is not None:
@@ -903,6 +950,8 @@ class Store:
         latest = revisions[-1]
         if expected_revision != latest.revision:
             raise ApiError(409, "stale_revision", "expected_revision is stale")
+        if amount < self.refunded_total(payment.id):
+            raise ApiError(422, "refund_exceeds_payment", "amount is below the already-refunded total")
         delta = amount - latest.amount
         if delta > 0:
             if self.available(self.users[payment.from_user_id]) < delta:
@@ -926,6 +975,165 @@ class Store:
             raise ApiError(409, "historical_overdraft", "correction would overdraw a historical balance")
         revisions.append(candidate)
         return candidate
+
+    def latest_revision(self, payment_id):
+        revisions = self.revisions.get(payment_id)
+        if revisions:
+            return revisions[-1]
+        payment = self.payments[payment_id]
+        revision = Revision(
+            revision=1,
+            amount=payment.amount,
+            effective_at=payment.created_at,
+            recorded_at=payment.created_at,
+            reason="",
+        )
+        self.revisions[payment_id] = [revision]
+        return revision
+
+    def refunded_total(self, payment_id):
+        total = 0
+        for pid in self.payment_ids:
+            payment = self.payments[pid]
+            if payment.refund_of == payment_id:
+                total += payment.amount
+        return total
+
+    def commit_refund(self, receiver, sender, amount, target):
+        pid = self.gen_id("p_")
+        created_at = now_iso()
+        payment = Payment(
+            id=pid,
+            from_user_id=receiver.id,
+            to_user_id=sender.id,
+            amount=amount,
+            currency=target.currency,
+            note=target.note,
+            visibility=target.visibility,
+            request_id=None,
+            settlement_id=None,
+            created_at=created_at,
+            authorization_id=None,
+            refund_of=target.id,
+        )
+        self.payments[pid] = payment
+        self.payment_ids.append(pid)
+        self.revisions[pid] = [
+            Revision(
+                revision=1,
+                amount=amount,
+                effective_at=created_at,
+                recorded_at=created_at,
+                reason="",
+            )
+        ]
+        return payment
+
+    def apply_correction_batch(self, corrections):
+        parsed = []
+        for entry in corrections:
+            if not isinstance(entry, dict):
+                raise ApiError(422, "validation_failed", "invalid correction item")
+            payment_id = entry.get("payment_id")
+            payment = self.payments.get(payment_id) if isinstance(payment_id, str) else None
+            if payment is None:
+                raise ApiError(404, "not_found", "no such payment")
+            if payment.authorization_id is not None or payment.refund_of is not None:
+                raise ApiError(422, "linked_payment_immutable", "linked payments cannot be corrected")
+            if "expected_revision" not in entry:
+                raise ApiError(422, "validation_failed", "expected_revision is required")
+            expected_revision = as_int(entry["expected_revision"], "expected_revision")
+            if expected_revision < 1:
+                raise ApiError(422, "validation_failed", "expected_revision must be positive")
+            if "amount" not in entry:
+                raise ApiError(422, "validation_failed", "amount is required")
+            amount = as_int(entry["amount"], "amount")
+            if amount < 0 or amount > 1000000000:
+                raise ApiError(422, "validation_failed", "amount out of range")
+            reason = entry.get("reason")
+            if not isinstance(reason, str) or not (1 <= len(reason) <= 200):
+                raise ApiError(422, "validation_failed", "reason must be 1 to 200 characters")
+            if "effective_at" not in entry:
+                raise ApiError(422, "validation_failed", "effective_at is required")
+            effective_at = entry["effective_at"]
+            effective_dt = parse_instant(effective_at, "effective_at")
+            if effective_dt > datetime.now(timezone.utc):
+                raise ApiError(422, "validation_failed", "effective_at must not be in the future")
+            latest = self.latest_revision(payment.id)
+            if expected_revision != latest.revision:
+                raise ApiError(409, "stale_revision", "expected_revision is stale")
+            if amount < self.refunded_total(payment.id):
+                raise ApiError(422, "refund_exceeds_payment", "amount is below the already-refunded total")
+            parsed.append((payment, latest, amount, effective_at, reason))
+
+        present = {payment.id for payment, _latest, _amount, _effective_at, _reason in parsed}
+        touched = {}
+        for payment, _latest, _amount, _effective_at, _reason in parsed:
+            if payment.settlement_id is not None:
+                touched.setdefault(payment.settlement_id, True)
+        for settlement_id in touched:
+            settlement = self.settlements.get(settlement_id)
+            member_ids = list(settlement.payment_ids) if settlement else []
+            for member_id in member_ids:
+                if member_id not in present:
+                    raise ApiError(422, "incomplete_settlement", "all settlement members must be corrected together")
+        for settlement_id in touched:
+            instants = set()
+            for payment, _latest, _amount, effective_at, _reason in parsed:
+                if payment.settlement_id == settlement_id:
+                    instants.add(parse_ts(effective_at))
+            if len(instants) > 1:
+                raise ApiError(422, "validation_failed", "settlement members must share effective_at")
+
+        net = {}
+        for payment, latest, amount, _effective_at, _reason in parsed:
+            delta = amount - latest.amount
+            if delta > 0:
+                net[payment.from_user_id] = net.get(payment.from_user_id, 0) - delta
+            elif delta < 0:
+                net[payment.to_user_id] = net.get(payment.to_user_id, 0) + delta
+        for user_id, change in net.items():
+            if self.available(self.users[user_id]) + change < 0:
+                raise ApiError(409, "insufficient_funds", "insufficient funds")
+
+        previous = [parse_ts(latest.recorded_at) for _p, latest, _a, _e, _r in parsed]
+        base = max(previous)
+        current = datetime.now(timezone.utc)
+        recorded_dt = current if current > base else base + timedelta(microseconds=1)
+        recorded_at = recorded_dt.isoformat()
+        batch_id = self.gen_id("cb_")
+        candidates = {}
+        for payment, latest, amount, effective_at, reason in parsed:
+            candidates[payment.id] = Revision(
+                revision=latest.revision + 1,
+                amount=amount,
+                effective_at=effective_at,
+                recorded_at=recorded_at,
+                reason=reason,
+                correction_batch_id=batch_id,
+            )
+        trial = {pid: list(revisions) for pid, revisions in self.revisions.items()}
+        for pid, candidate in candidates.items():
+            trial[pid] = trial.get(pid, []) + [candidate]
+        openings = {uid: user.opening_balance for uid, user in self.users.items()}
+        if historical_overdraft(
+            openings, self.payments, trial, self._all_authorizations(), self._captures_by_auth()
+        ):
+            raise ApiError(409, "historical_overdraft", "batch would overdraw a historical balance")
+
+        members = []
+        payloads = []
+        for payment, latest, amount, effective_at, reason in parsed:
+            candidate = candidates[payment.id]
+            self.revisions[payment.id].append(candidate)
+            members.append({"payment_id": payment.id, "revision": candidate.revision})
+            payload = revision_json(candidate)
+            payload["payment_id"] = payment.id
+            payloads.append(payload)
+        self.correction_batches[batch_id] = CorrectionBatch(
+            id=batch_id, recorded_at=recorded_at, members=members
+        )
+        return batch_id, recorded_at, payloads
 
     def export_state(self):
         return {
@@ -963,9 +1171,23 @@ class Store:
                         "effective_at": revision.effective_at,
                         "recorded_at": revision.recorded_at,
                         "reason": revision.reason,
+                        "correction_batch_id": revision.correction_batch_id,
                     }
                     for pid, revisions in self.revisions.items()
                     for revision in revisions
+                ],
+                "correction_batches": [
+                    asdict(batch) for batch in self.correction_batches.values()
+                ],
+                "snapshots": [
+                    {
+                        "token": token,
+                        "user_id": snapshot["user_id"],
+                        "opening_balance": snapshot["opening_balance"],
+                        "closing_balance": snapshot["closing_balance"],
+                        "entries": snapshot["entries"],
+                    }
+                    for token, snapshot in self.snapshots.items()
                 ],
                 "operators": sorted(self.operators),
                 "idempotency": [asdict(record) for record in self.idem.values()],

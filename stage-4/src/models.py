@@ -37,6 +37,7 @@ class Payment:
     settlement_id: Optional[str]
     created_at: str
     authorization_id: Optional[str] = None
+    refund_of: Optional[str] = None
 
 
 @dataclass
@@ -46,6 +47,14 @@ class Revision:
     effective_at: str
     recorded_at: str
     reason: str = ""
+    correction_batch_id: Optional[str] = None
+
+
+@dataclass
+class CorrectionBatch:
+    id: str
+    recorded_at: str
+    members: List[dict] = field(default_factory=list)
 
 
 @dataclass
