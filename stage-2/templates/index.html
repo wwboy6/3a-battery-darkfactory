@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Home - Pocketful{% endblock %}
+{% block content %}
+<div class="page__head">
+  <h1>Money, made simple</h1>
+  <p>Send money, request it back, or reserve it for later.</p>
+</div>
+
+<div class="grid-2">
+  <section class="card" id="pay-card">
+    <div class="card__head"><h2>Pay someone</h2></div>
+    <form id="pay-form" novalidate>
+      <div class="field">
+        <label class="field__label" for="pay-handle">Recipient handle</label>
+        <input class="input" id="pay-handle" name="to_handle" type="text" autocomplete="off" placeholder="ada" data-testid="pay-handle">
+      </div>
+      <div class="field__inline">
+        <div class="field">
+          <label class="field__label" for="pay-amount">Amount</label>
+          <input class="input input--amount" id="pay-amount" name="amount" type="text" inputmode="decimal" placeholder="15.00" data-testid="pay-amount">
+        </div>
+        <div class="field">
+          <label class="field__label" for="pay-visibility">Visibility</label>
+          <select class="select" id="pay-visibility" name="visibility" data-testid="pay-visibility">
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label class="field__label" for="pay-note">Note <span class="field__hint">(optional)</span></label>
+        <input class="input" id="pay-note" name="note" type="text" maxlength="200" placeholder="What is it for?" data-testid="pay-note">
+      </div>
+      <button class="btn btn--primary btn--block" type="submit" data-testid="pay-submit">Pay</button>
+      <div data-errors="pay"></div>
+    </form>
+  </section>
+
+  <section class="card" id="request-card">
+    <div class="card__head"><h2>Request money</h2></div>
+    <form id="request-form" novalidate>
+      <div class="field">
+        <label class="field__label" for="request-handle">Who should pay?</label>
+        <input class="input" id="request-handle" name="payer_handle" type="text" autocomplete="off" placeholder="bob" data-testid="request-handle">
+      </div>
+      <div class="field">
+        <label class="field__label" for="request-amount">Amount</label>
+        <input class="input input--amount" id="request-amount" name="amount" type="text" inputmode="decimal" placeholder="15.00" data-testid="request-amount">
+      </div>
+      <div class="field">
+        <label class="field__label" for="request-note">Note <span class="field__hint">(optional)</span></label>
+        <input class="input" id="request-note" name="note" type="text" maxlength="200" placeholder="Dinner last night" data-testid="request-note">
+      </div>
+      <button class="btn btn--primary btn--block" type="submit" data-testid="request-submit">Request</button>
+      <div data-errors="request"></div>
+    </form>
+  </section>
+</div>
+
+<div class="stack" style="margin-top: var(--space-4)">
+  {% include "_authorize_form.html" %}
+
+  <section class="card">
+    <div class="card__head">
+      <h2>Activity</h2>
+      <button class="btn btn--ghost btn--sm" type="button" data-action="wallet-refresh" data-testid="wallet-refresh">Refresh</button>
+    </div>
+    <ul class="list" data-testid="activity-list">
+      {% for payment in (payments|default([]))|sort(attribute='created_at', reverse=true) %}
+      <li class="listitem activity-item" data-testid="activity-item-{{ payment.payment_id }}" data-visibility="{{ payment.visibility }}">
+        <div class="listitem__main">
+          <div class="listitem__title">
+            <span data-testid="activity-parties-{{ payment.payment_id }}">@{{ payment.from_handle }} &rarr; @{{ payment.to_handle }}</span>
+            <span class="badge badge--{{ payment.visibility }}">{{ payment.visibility }}</span>
+          </div>
+          <div class="activity-note{% if not payment.note %} activity-note--empty{% endif %}" data-testid="activity-note-{{ payment.payment_id }}">{{ payment.note }}</div>
+          <div class="meta" data-ts="{{ payment.created_at }}">{{ payment.created_at }}</div>
+        </div>
+        <div class="listitem__side">
+          <span class="money money--big" data-testid="activity-amount-{{ payment.payment_id }}">{{ payment.amount|money }}</span>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="empty" data-testid="empty-activity" {% if payments|default([]) %}hidden{% endif %}>
+      <div class="empty__title">No activity yet</div>
+      <div class="empty__hint">Payments you make or receive will appear here.</div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/home.js" defer></script>{% endblock %}

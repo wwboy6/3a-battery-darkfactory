@@ -1,0 +1,31 @@
+<section class="card" id="authorize-card">
+  <div class="card__head">
+    <h2>Authorize a payment</h2>
+    <span class="card__hint">Reserve money for someone to capture later</span>
+  </div>
+  <form id="authorize-form" novalidate>
+    <div class="field">
+      <label class="field__label" for="authorize-handle">Recipient handle</label>
+      <input class="input" id="authorize-handle" name="to_handle" type="text" autocomplete="off" placeholder="ada" data-testid="authorize-handle">
+    </div>
+    <div class="field__inline">
+      <div class="field">
+        <label class="field__label" for="authorize-amount">Amount</label>
+        <input class="input input--amount" id="authorize-amount" name="amount" type="text" inputmode="decimal" placeholder="15.00" data-testid="authorize-amount">
+      </div>
+      <div class="field">
+        <label class="field__label" for="authorize-visibility">Visibility</label>
+        <select class="select" id="authorize-visibility" name="visibility" data-testid="authorize-visibility">
+          <option value="public">Public</option>
+          <option value="private">Private</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label class="field__label" for="authorize-note">Note <span class="field__hint">(optional)</span></label>
+      <input class="input" id="authorize-note" name="note" type="text" maxlength="200" placeholder="What is it for?" data-testid="authorize-note">
+    </div>
+    <button class="btn btn--primary btn--block" type="submit" data-testid="authorize-submit">Authorize</button>
+    <div data-errors="authorize"></div>
+  </form>
+</section>

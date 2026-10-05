@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="app-currency" content="{{ current_user.currency if current_user else '' }}">
+  <meta name="app-minor-units" content="{{ current_user.minor_units if current_user else '' }}">
+  <meta name="app-token" content="{{ token|default('') }}">
+  <meta name="app-user-id" content="{{ current_user.user_id if current_user else '' }}">
+  <title>{% block title %}Pocketful{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="app">
+  {% if current_user %}
+  <header class="topbar">
+    <div class="topbar__inner">
+      <a class="brand" href="/" aria-label="Pocketful home">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span class="brand__name">Pocketful</span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a class="nav__link" href="/">Home</a>
+        <a class="nav__link" href="/requests">Requests</a>
+        <a class="nav__link" href="/split">Split</a>
+        <a class="nav__link" href="/authorizations">Authorizations</a>
+      </nav>
+      <div class="userbox">
+        <span class="userbox__name" data-testid="current-user">{{ current_user.display_name }}</span>
+        <span class="userbox__handle" data-testid="current-handle">{{ current_user.handle }}</span>
+        <button class="btn btn--ghost btn--sm" type="button" data-testid="logout-button" data-action="logout">Log out</button>
+      </div>
+    </div>
+    <div class="walletbar" aria-label="Wallet summary">
+      <div class="container walletbar__inner">
+        <div class="walletbar__primary">
+          <span class="walletbar__label">Available to spend</span>
+          <span class="walletbar__amount" data-testid="wallet-available" data-amount="{{ current_user.available|default(current_user.balance|default(0), true) }}">{{ (current_user.available|default(current_user.balance|default(0), true))|money }}</span>
+        </div>
+        <div class="walletbar__item" id="wallet-balance-item">
+          <span class="walletbar__label">Total</span>
+          <span class="walletbar__amount walletbar__amount--secondary" data-testid="wallet-balance" data-amount="{{ current_user.total|default(current_user.balance|default(0), true) }}">{{ (current_user.total|default(current_user.balance|default(0), true))|money }}</span>
+        </div>
+        {% set held = current_user.held|default(0, true) %}
+        {% if held %}
+        <div class="walletbar__item">
+          <span class="walletbar__label">Held</span>
+          <span class="walletbar__amount walletbar__amount--secondary" data-testid="wallet-held" data-amount="{{ held }}">{{ held|money }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+  {% endif %}
+
+  <main class="container page">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/app.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

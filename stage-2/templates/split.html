@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Split a bill - Pocketful{% endblock %}
+{% block content %}
+<div class="page__head">
+  <h1>Split a bill</h1>
+  <p>Divide an amount between everyone, and Pocketful asks each person for their share.</p>
+</div>
+
+<section class="card" style="max-width: 640px">
+  <form id="split-form" novalidate>
+    <div class="field">
+      <label class="field__label" for="split-amount">Total amount</label>
+      <input class="input input--amount" id="split-amount" name="amount" type="text" inputmode="decimal" placeholder="60.00" data-testid="split-amount">
+    </div>
+    <div class="field">
+      <label class="field__label" for="split-handles">Who is splitting?</label>
+      <input class="input" id="split-handles" name="handles" type="text" autocomplete="off" placeholder="ada, bob, cleo" data-testid="split-handles">
+      <span class="field__hint">Handles separated by commas, in order. Include yourself if you are part of the split.</span>
+    </div>
+    <div class="field">
+      <label class="field__label" for="split-note">Note <span class="field__hint">(optional)</span></label>
+      <input class="input" id="split-note" name="note" type="text" maxlength="200" placeholder="Dinner" data-testid="split-note">
+    </div>
+    <button class="btn btn--primary btn--block" type="submit" data-testid="split-submit">Split it</button>
+    <div data-errors="split"></div>
+  </form>
+
+  <div class="preview" data-testid="split-preview" hidden>
+    <h3 style="margin-bottom: var(--space-2)">Each person pays</h3>
+    <div class="preview__list" id="split-preview-list"></div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/split.js" defer></script>{% endblock %}

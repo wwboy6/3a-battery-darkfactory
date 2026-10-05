@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Authorizations - Pocketful{% endblock %}
+{% block content %}
+<div class="page__head">
+  <h1>Authorizations</h1>
+  <p>Reserved money, waiting to be captured. Available funds exclude open holds.</p>
+</div>
+
+<div class="stack">
+  {% include "_authorize_form.html" %}
+
+  <section class="card">
+    <div class="card__head">
+      <h2>Your authorizations</h2>
+      <span class="card__hint">Newest first</span>
+    </div>
+    <div data-errors="authorization"></div>
+    <ul class="list" data-testid="authorization-list">
+      {% for a in ((incoming|default([])) + (outgoing|default([])))|sort(attribute='created_at', reverse=true) %}
+      {% set is_incoming = (a.to_user_id == current_user.user_id) %}
+      <li class="listitem listitem--guttered" data-testid="authorization-item-{{ a.authorization_id }}" data-status="{{ a.status }}">
+        <div class="listitem__main">
+          <div class="listitem__title">
+            <span>@{{ a.from_handle }} &rarr; @{{ a.to_handle }}</span>
+            <span class="badge badge--{{ a.status }}">{{ a.status }}</span>
+            <span class="badge badge--{{ a.visibility }}">{{ a.visibility }}</span>
+          </div>
+          {% if a.note %}<div class="listitem__sub">{{ a.note }}</div>{% endif %}
+          {% if a.status == 'captured' %}
+          <div class="listitem__sub">Captured <span class="money" data-testid="authorization-captured-{{ a.authorization_id }}">{{ a.captured_amount|money }}</span></div>
+          {% endif %}
+          <div class="meta">Expires <span data-testid="authorization-expires-{{ a.authorization_id }}">{{ a.expires_at }}</span></div>
+        </div>
+        <div class="listitem__side">
+          <span class="money money--big" data-testid="authorization-amount-{{ a.authorization_id }}">{{ a.amount|money }}</span>
+          {% if is_incoming and a.status == 'open' %}
+          <div class="capture">
+            <input class="input input--amount" type="text" inputmode="decimal" aria-label="Capture amount" data-testid="authorization-capture-amount-{{ a.authorization_id }}" value="{{ ((a.remaining_amount|default(a.amount))|money)|replace(current_user.currency, '')|trim }}">
+            <button class="btn btn--primary btn--sm" type="button" data-action="capture-authorization" data-id="{{ a.authorization_id }}" data-testid="authorization-capture-{{ a.authorization_id }}">Capture</button>
+          </div>
+          {% elif (a.from_user_id == current_user.user_id) and a.status == 'open' %}
+          <button class="btn btn--danger btn--sm" type="button" data-action="void-authorization" data-id="{{ a.authorization_id }}" data-testid="authorization-void-{{ a.authorization_id }}">Void</button>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="empty" data-testid="empty-authorizations" {% if (incoming|default([])) or (outgoing|default([])) %}hidden{% endif %}>
+      <div class="empty__title">No authorizations yet</div>
+      <div class="empty__hint">Reserve money for someone and it will show up here.</div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/authorizations.js" defer></script>{% endblock %}
