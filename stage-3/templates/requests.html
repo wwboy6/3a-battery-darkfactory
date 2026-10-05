@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Requests - Pocketful{% endblock %}
+{% block content %}
+<div class="page__head">
+  <h1>Requests</h1>
+  <p>Pay, decline or cancel the money moving between you and your people.</p>
+</div>
+<div data-errors="requests"></div>
+
+<div class="columns">
+  <section class="card">
+    <div class="card__head"><h2>Incoming</h2><span class="card__hint">People asking you</span></div>
+    <ul class="list" data-testid="incoming-list">
+      {% for r in incoming|default([]) %}
+      <li class="listitem" data-testid="request-item-{{ r.request_id }}" data-status="{{ r.status }}">
+        <div class="listitem__main">
+          <div class="listitem__title">
+            <span>@{{ r.requester_handle }} &rarr; @{{ r.payer_handle }}</span>
+            <span class="badge badge--{{ r.status }}">{{ r.status }}</span>
+          </div>
+          {% if r.note %}<div class="listitem__sub">{{ r.note }}</div>{% endif %}
+          <div class="meta" data-ts="{{ r.created_at }}">{{ r.created_at }}</div>
+        </div>
+        <div class="listitem__side">
+          <span class="money" data-testid="request-amount-{{ r.request_id }}">{{ r.amount|money }}</span>
+          {% if r.status == 'pending' %}
+          <button class="btn btn--primary btn--sm" type="button" data-action="pay-request" data-id="{{ r.request_id }}" data-testid="request-pay-{{ r.request_id }}">Pay</button>
+          <button class="btn btn--ghost btn--sm" type="button" data-action="decline-request" data-id="{{ r.request_id }}" data-testid="request-decline-{{ r.request_id }}">Decline</button>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="empty" data-testid="incoming-empty" {% if incoming|default([]) %}hidden{% endif %}>
+      <div class="empty__title">Nothing incoming</div>
+      <div class="empty__hint">Requests for you will show up here.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card__head"><h2>Outgoing</h2><span class="card__hint">People you asked</span></div>
+    <ul class="list" data-testid="outgoing-list">
+      {% for r in outgoing|default([]) %}
+      <li class="listitem" data-testid="request-item-{{ r.request_id }}" data-status="{{ r.status }}">
+        <div class="listitem__main">
+          <div class="listitem__title">
+            <span>@{{ r.requester_handle }} &rarr; @{{ r.payer_handle }}</span>
+            <span class="badge badge--{{ r.status }}">{{ r.status }}</span>
+          </div>
+          {% if r.note %}<div class="listitem__sub">{{ r.note }}</div>{% endif %}
+          <div class="meta" data-ts="{{ r.created_at }}">{{ r.created_at }}</div>
+        </div>
+        <div class="listitem__side">
+          <span class="money" data-testid="request-amount-{{ r.request_id }}">{{ r.amount|money }}</span>
+          {% if r.status == 'pending' %}
+          <button class="btn btn--ghost btn--sm" type="button" data-action="cancel-request" data-id="{{ r.request_id }}" data-testid="request-cancel-{{ r.request_id }}">Cancel</button>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="empty" data-testid="outgoing-empty" {% if outgoing|default([]) %}hidden{% endif %}>
+      <div class="empty__title">Nothing outgoing</div>
+      <div class="empty__hint">Requests you send will show up here.</div>
+    </div>
+  </section>
+</div>
+
+<div class="empty" data-testid="empty-requests" style="margin-top: var(--space-4)" {% if (incoming|default([])) or (outgoing|default([])) %}hidden{% endif %}>
+  <div class="empty__title">No requests yet</div>
+  <div class="empty__hint">Ask someone for money from the home screen.</div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/requests.js" defer></script>{% endblock %}

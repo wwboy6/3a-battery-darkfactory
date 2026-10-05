@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Sign in - Pocketful{% endblock %}
+{% block content %}
+<div class="auth">
+  <div class="auth__card">
+    <div class="auth__brand"><span class="brand__mark" aria-hidden="true"></span> Pocketful</div>
+    <h1 class="auth__title">Welcome back</h1>
+    <p class="auth__sub">Sign in to see your balance and activity.</p>
+    {% if error %}<p class="alert alert--error" data-testid="auth-error">{{ error }}</p>{% endif %}
+    <form method="post" action="/login" novalidate>
+      <div class="field">
+        <label class="field__label" for="login-email">Email</label>
+        <input class="input" id="login-email" name="email" type="email" autocomplete="email" required data-testid="login-email">
+      </div>
+      <div class="field">
+        <label class="field__label" for="login-password">Password</label>
+        <input class="input" id="login-password" name="password" type="password" autocomplete="current-password" required data-testid="login-password">
+      </div>
+      <button class="btn btn--primary btn--block" type="submit" data-testid="login-submit">Sign in</button>
+    </form>
+    <p class="auth__foot">New to Pocketful? <a href="/signup">Create an account</a></p>
+  </div>
+</div>
+{% endblock %}
