@@ -35,7 +35,12 @@ def import_state(api, obj):
 
 def strip_stage2_fields(document):
     """Remove the stage-2 additions anywhere in the opaque export state."""
-    removed = {"authorizations": 0, "authorization_ttl_seconds": 0, "authorization_id": 0}
+    removed = {
+        "authorizations": 0,
+        "authorization_order": 0,
+        "authorization_ttl_seconds": 0,
+        "authorization_id": 0,
+    }
 
     def walk(node):
         if isinstance(node, dict):
@@ -61,6 +66,9 @@ def stage1_shaped_export(api):
     )
     assert removed["authorization_ttl_seconds"] >= 1, (
         "stage-2 export must include authorization_ttl_seconds"
+    )
+    assert removed["authorization_order"] >= 1, (
+        "stage-2 export must include the authorization order the stage-1 format omits"
     )
     return snapshot
 
