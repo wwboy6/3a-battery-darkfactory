@@ -4,7 +4,7 @@ import time
 
 from playwright.sync_api import expect
 
-from support import api_login, fill_pay_form, is_post_to, unique
+from support import api_login, fill_pay_form, is_post_to, path_of, unique
 
 
 def _is_payment_post(target) -> bool:
