@@ -321,14 +321,19 @@ def test_import_accepts_simulated_stage1_export(api, reset):
 # --------------------------------------------------------------------------- #
 
 
-def test_snapshots_cleared_on_import(api, reset):
+def test_snapshot_survives_import_in_stage4(api, reset):
+    # Stage 3 cleared snapshots on import; stage 4 exports and imports them, so
+    # the token keeps paging its frozen entries after the import.
     reset(make_fixture(payments=[seeded_payment("p_1", "u_ada", "u_bob", 500, created_at=T1)]))
     tok = relogin(api, "ada")
-    token = payload(statement(api, tok["ada"]))["snapshot"]
+    first = payload(statement(api, tok["ada"]))
+    token = first["snapshot"]
 
     snap = export(api)
     expect(import_state(api, snap), 204)
-    expect(statement(api, tok["ada"], snapshot=token), 404, "not_found")
+    paged = payload(statement(api, tok["ada"], snapshot=token))
+    assert paged["entries"] == first["entries"]
+    assert paged["opening_balance"] == first["opening_balance"]
 
 
 def test_invalid_import_leaves_stage3_state_untouched(api, tokens):

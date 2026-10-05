@@ -19,7 +19,7 @@ REQUIRED_PAYMENT_FIELDS = {
 }
 # §11 mentions settlement_id on payments; §8's body example omits it, so accept
 # it when present but require it to be null for an ordinary (non-settlement) payment.
-OPTIONAL_PAYMENT_FIELDS = {"settlement_id", "authorization_id"}
+OPTIONAL_PAYMENT_FIELDS = {"settlement_id", "authorization_id", "refund_of"}
 
 
 def pay(api, token, **body):
@@ -41,6 +41,7 @@ def test_payment_returns_documented_body_and_moves_money(api, tokens):
     assert set(body) <= REQUIRED_PAYMENT_FIELDS | OPTIONAL_PAYMENT_FIELDS
     assert body.get("settlement_id") is None
     assert body.get("authorization_id") is None
+    assert body.get("refund_of") is None
     assert body["from_user_id"] == "u_ada" and body["from_handle"] == "ada"
     assert body["to_user_id"] == "u_bob" and body["to_handle"] == "bob"
     assert body["amount"] == 1500 and body["currency"] == "EUR"

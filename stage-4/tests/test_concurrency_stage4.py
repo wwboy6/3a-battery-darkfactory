@@ -105,7 +105,7 @@ def test_concurrent_single_and_batch_correction_one_winner(api, reset):
 
 def test_concurrent_batches_same_payment_one_winner(api, reset):
     reset(operator_fixture())
-    tok = relogin(api, "ada", "bob")
+    tok = relogin(api, "ada", "bob", "cy")
     p1 = pay(api, tok["ada"], "bob", 500)
     effective_at = seconds_from_now(-60)
     keys = [unique("batch") for _ in range(6)]
