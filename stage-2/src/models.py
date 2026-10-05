@@ -35,6 +35,7 @@ class Payment:
     request_id: Optional[str]
     settlement_id: Optional[str]
     created_at: str
+    authorization_id: Optional[str] = None
 
 
 @dataclass
@@ -55,6 +56,23 @@ class Settlement:
     id: str
     committed_at: str
     payment_ids: List[str]
+
+
+@dataclass
+class Authorization:
+    id: str
+    from_user_id: str
+    to_user_id: str
+    amount: int
+    captured_amount: int
+    currency: str
+    note: str
+    visibility: str
+    status: str
+    expires_at: str
+    payment_id: Optional[str]
+    payment_ids: List[str]
+    created_at: str
 
 
 @dataclass

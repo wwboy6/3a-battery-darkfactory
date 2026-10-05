@@ -3,18 +3,41 @@ import math
 import re
 import secrets
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import security
-from models import ApiError, IdempotencyRecord, Payment, Request, Settlement, User
+from models import ApiError, Authorization, IdempotencyRecord, Payment, Request, Settlement, User
 
 HANDLE_RE = re.compile(r"^[a-z0-9_]{1,20}$")
 VISIBILITIES = ("public", "private")
 STATUSES = ("pending", "paid", "declined", "cancelled")
+AUTHORIZATION_STATUSES = ("open", "captured", "voided", "expired")
+DEFAULT_AUTHORIZATION_TTL = 600
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def parse_ts(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def effective_status(authorization, now=None):
+    if authorization.status == "open":
+        now = now or datetime.now(timezone.utc)
+        if parse_ts(authorization.expires_at) <= now:
+            return "expired"
+    return authorization.status
+
+
+def remaining_amount(authorization, now=None):
+    if effective_status(authorization, now) == "open":
+        return authorization.amount - authorization.captured_amount
+    return 0
 
 
 def as_int(value, field="value") -> int:
@@ -46,6 +69,9 @@ def _empty_state():
         "requests": {},
         "request_ids": [],
         "settlements": {},
+        "authorization_ttl_seconds": DEFAULT_AUTHORIZATION_TTL,
+        "authorizations": {},
+        "authorization_ids": [],
         "operators": set(),
         "idem": {},
     }
@@ -62,6 +88,10 @@ def build_reset_state(fixture):
     minor_units = fixture.get("minor_units")
     if isinstance(minor_units, bool) or minor_units not in (0, 2, 3):
         raise ApiError(422, "validation_failed", "minor_units must be 0, 2 or 3")
+
+    ttl = as_int(fixture.get("authorization_ttl_seconds", DEFAULT_AUTHORIZATION_TTL), "authorization_ttl_seconds")
+    if ttl < 1:
+        raise ApiError(422, "validation_failed", "authorization_ttl_seconds must be positive")
 
     raw_users = fixture.get("users")
     if not isinstance(raw_users, list):
@@ -145,6 +175,7 @@ def build_reset_state(fixture):
             request_id=entry.get("request_id"),
             settlement_id=entry.get("settlement_id"),
             created_at=created_at,
+            authorization_id=entry.get("authorization_id"),
         )
         state["payment_ids"].append(pid)
 
@@ -195,7 +226,70 @@ def build_reset_state(fixture):
         raise ApiError(422, "validation_failed", "invalid settlement_operator_ids")
     state["operators"] = set(operators)
 
+    state["authorization_ttl_seconds"] = ttl
+    raw_authorizations = fixture.get("authorizations", [])
+    if not isinstance(raw_authorizations, list):
+        raise ApiError(422, "validation_failed", "authorizations must be a list")
+    for entry in raw_authorizations:
+        if not isinstance(entry, dict):
+            raise ApiError(422, "validation_failed", "invalid authorization entry")
+        aid = _require(entry, "id")
+        from_id = _require(entry, "from_user_id")
+        to_id = _require(entry, "to_user_id")
+        amount = as_int(_require(entry, "amount"), "amount")
+        expires_at = _require(entry, "expires_at")
+        captured_amount = as_int(entry.get("captured_amount", 0), "captured_amount")
+        note = entry.get("note", "")
+        visibility = entry.get("visibility", "public")
+        status = entry.get("status", "open")
+        payment_id = entry.get("payment_id")
+        payment_ids = entry.get("payment_ids", [])
+        if not isinstance(aid, str) or not aid or aid in state["authorizations"]:
+            raise ApiError(422, "validation_failed", "invalid authorization id")
+        if from_id not in state["users"] or to_id not in state["users"]:
+            raise ApiError(422, "validation_failed", "unknown authorization user")
+        if amount < 0 or captured_amount < 0 or captured_amount > amount:
+            raise ApiError(422, "validation_failed", "invalid authorization amount")
+        if not isinstance(note, str) or visibility not in VISIBILITIES:
+            raise ApiError(422, "validation_failed", "invalid authorization fields")
+        if status not in AUTHORIZATION_STATUSES:
+            raise ApiError(422, "validation_failed", "invalid authorization status")
+        if not isinstance(expires_at, str):
+            raise ApiError(422, "validation_failed", "invalid expires_at")
+        if not isinstance(payment_ids, list):
+            raise ApiError(422, "validation_failed", "invalid payment_ids")
+        state["authorizations"][aid] = Authorization(
+            id=aid,
+            from_user_id=from_id,
+            to_user_id=to_id,
+            amount=amount,
+            captured_amount=captured_amount,
+            currency=currency,
+            note=note,
+            visibility=visibility,
+            status=status,
+            expires_at=expires_at,
+            payment_id=payment_id,
+            payment_ids=list(payment_ids),
+            created_at=entry.get("created_at") if isinstance(entry.get("created_at"), str) else now_iso(),
+        )
+        state["authorization_ids"].append(aid)
+
+    _validate_holds(state)
+
     return state
+
+
+def _validate_holds(state):
+    held = {}
+    for authorization in state["authorizations"].values():
+        if effective_status(authorization) == "open":
+            held[authorization.from_user_id] = held.get(authorization.from_user_id, 0) + (
+                authorization.amount - authorization.captured_amount
+            )
+    for user_id, amount in held.items():
+        if amount > state["users"][user_id].balance:
+            raise ApiError(422, "validation_failed", "open holds exceed the user balance")
 
 
 def build_import_state(payload):
@@ -221,6 +315,10 @@ def _state_from_export(data):
         raise ApiError(422, "validation_failed", "invalid currency")
     if isinstance(minor_units, bool) or minor_units not in (0, 2, 3):
         raise ApiError(422, "validation_failed", "invalid minor_units")
+
+    ttl = as_int(data.get("authorization_ttl_seconds", DEFAULT_AUTHORIZATION_TTL), "authorization_ttl_seconds")
+    if ttl < 1:
+        raise ApiError(422, "validation_failed", "invalid authorization_ttl_seconds")
 
     users = data.get("users")
     if not isinstance(users, list):
@@ -292,6 +390,48 @@ def _state_from_export(data):
             request_id=entry.get("request_id"),
             settlement_id=entry.get("settlement_id"),
             created_at=created_at,
+            authorization_id=entry.get("authorization_id"),
+        )
+
+    for entry in data.get("authorizations", []) or []:
+        if not isinstance(entry, dict):
+            raise ApiError(422, "validation_failed", "invalid authorization")
+        aid = _require(entry, "id")
+        from_id = _require(entry, "from_user_id")
+        to_id = _require(entry, "to_user_id")
+        amount = as_int(_require(entry, "amount"), "amount")
+        expires_at = _require(entry, "expires_at")
+        captured_amount = as_int(entry.get("captured_amount", 0), "captured_amount")
+        note = entry.get("note", "")
+        visibility = entry.get("visibility", "public")
+        status = entry.get("status", "open")
+        payment_ids = entry.get("payment_ids", [])
+        if not isinstance(aid, str) or not aid or aid in state["authorizations"]:
+            raise ApiError(422, "validation_failed", "invalid authorization id")
+        if from_id not in state["users"] or to_id not in state["users"]:
+            raise ApiError(422, "validation_failed", "unknown authorization user")
+        if amount < 0 or captured_amount < 0 or captured_amount > amount:
+            raise ApiError(422, "validation_failed", "invalid authorization amount")
+        if not isinstance(note, str) or visibility not in VISIBILITIES:
+            raise ApiError(422, "validation_failed", "invalid authorization fields")
+        if status not in AUTHORIZATION_STATUSES or not isinstance(expires_at, str):
+            raise ApiError(422, "validation_failed", "invalid authorization status")
+        if not isinstance(payment_ids, list):
+            raise ApiError(422, "validation_failed", "invalid payment_ids")
+        state["authorizations"][aid] = Authorization(
+            id=aid,
+            from_user_id=from_id,
+            to_user_id=to_id,
+            amount=amount,
+            captured_amount=captured_amount,
+            currency=currency,
+            note=note,
+            visibility=visibility,
+            status=status,
+            expires_at=expires_at,
+            payment_id=entry.get("payment_id"),
+            payment_ids=list(payment_ids),
+            created_at=entry.get("created_at") if isinstance(entry.get("created_at"), str) else now_iso(),
         )
 
     for entry in data.get("requests", []) or []:
@@ -360,6 +500,9 @@ def _state_from_export(data):
 
     state["payment_ids"] = _ordered_ids(data.get("payment_order"), state["payments"])
     state["request_ids"] = _ordered_ids(data.get("request_order"), state["requests"])
+    state["authorization_ids"] = _ordered_ids(data.get("authorization_order"), state["authorizations"])
+    state["authorization_ttl_seconds"] = ttl
+    _validate_holds(state)
     return state
 
 
@@ -392,8 +535,29 @@ class Store:
         self.requests = state["requests"]
         self.request_ids = state["request_ids"]
         self.settlements = state["settlements"]
+        self.authorization_ttl_seconds = state["authorization_ttl_seconds"]
+        self.authorizations = state["authorizations"]
+        self.authorization_ids = state["authorization_ids"]
         self.operators = state["operators"]
         self.idem = state["idem"]
+
+    # ---- holds / availability (caller holds the lock) ----
+    def effective_status(self, authorization):
+        return effective_status(authorization)
+
+    def remaining(self, authorization):
+        return remaining_amount(authorization)
+
+    def held(self, user_id):
+        total = 0
+        for aid in self.authorization_ids:
+            authorization = self.authorizations[aid]
+            if authorization.from_user_id == user_id:
+                total += remaining_amount(authorization)
+        return total
+
+    def available(self, user):
+        return user.balance - self.held(user.id)
 
     def gen_id(self, prefix):
         return prefix + secrets.token_hex(8)
@@ -436,7 +600,30 @@ class Store:
         self.request_ids.append(rid)
         return request
 
-    def commit_payment(self, from_user, to_user, amount, note, visibility, request_id=None, settlement_id=None, created_at=None):
+    def create_authorization(self, from_user, to_user, amount, note, visibility):
+        aid = self.gen_id("a_")
+        created_at = now_iso()
+        expires_at = (parse_ts(created_at) + timedelta(seconds=self.authorization_ttl_seconds)).isoformat()
+        authorization = Authorization(
+            id=aid,
+            from_user_id=from_user.id,
+            to_user_id=to_user.id,
+            amount=amount,
+            captured_amount=0,
+            currency=self.currency,
+            note=note,
+            visibility=visibility,
+            status="open",
+            expires_at=expires_at,
+            payment_id=None,
+            payment_ids=[],
+            created_at=created_at,
+        )
+        self.authorizations[aid] = authorization
+        self.authorization_ids.append(aid)
+        return authorization
+
+    def commit_payment(self, from_user, to_user, amount, note, visibility, request_id=None, settlement_id=None, created_at=None, authorization_id=None):
         pid = self.gen_id("p_")
         from_user.balance -= amount
         to_user.balance += amount
@@ -451,6 +638,7 @@ class Store:
             request_id=request_id,
             settlement_id=settlement_id,
             created_at=created_at or now_iso(),
+            authorization_id=authorization_id,
         )
         self.payments[pid] = payment
         self.payment_ids.append(pid)
@@ -484,6 +672,7 @@ class Store:
             "note": payment.note,
             "visibility": payment.visibility,
             "request_id": payment.request_id,
+            "authorization_id": payment.authorization_id,
             "created_at": payment.created_at,
         }
         if payment.settlement_id is not None:
@@ -505,6 +694,28 @@ class Store:
             "status": request.status,
             "payment_id": request.payment_id,
             "created_at": request.created_at,
+        }
+
+    def authorization_json(self, authorization):
+        from_user = self.users.get(authorization.from_user_id)
+        to_user = self.users.get(authorization.to_user_id)
+        return {
+            "authorization_id": authorization.id,
+            "from_user_id": authorization.from_user_id,
+            "from_handle": from_user.handle if from_user else None,
+            "to_user_id": authorization.to_user_id,
+            "to_handle": to_user.handle if to_user else None,
+            "amount": authorization.amount,
+            "captured_amount": authorization.captured_amount,
+            "remaining_amount": remaining_amount(authorization),
+            "currency": authorization.currency,
+            "note": authorization.note,
+            "visibility": authorization.visibility,
+            "status": effective_status(authorization),
+            "expires_at": authorization.expires_at,
+            "payment_id": authorization.payment_id,
+            "payment_ids": list(authorization.payment_ids),
+            "created_at": authorization.created_at,
         }
 
     def export_state(self):
@@ -531,6 +742,9 @@ class Store:
                 "requests": [asdict(request) for request in self.requests.values()],
                 "request_order": list(self.request_ids),
                 "settlements": [asdict(settlement) for settlement in self.settlements.values()],
+                "authorization_ttl_seconds": self.authorization_ttl_seconds,
+                "authorizations": [asdict(authorization) for authorization in self.authorizations.values()],
+                "authorization_order": list(self.authorization_ids),
                 "operators": sorted(self.operators),
                 "idempotency": [asdict(record) for record in self.idem.values()],
             },
