@@ -6,38 +6,33 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
 import security
-from models import ApiError, Authorization, IdempotencyRecord, Payment, Request, Settlement, User
+from ledger import (
+    effective_status,
+    held_for,
+    historical_overdraft,
+    next_recorded_at,
+    now_iso,
+    parse_ts,
+    remaining_amount,
+    selected_map,
+    total_for,
+)
+from models import (
+    ApiError,
+    Authorization,
+    IdempotencyRecord,
+    Payment,
+    Request,
+    Revision,
+    Settlement,
+    User,
+)
 
 HANDLE_RE = re.compile(r"^[a-z0-9_]{1,20}$")
 VISIBILITIES = ("public", "private")
 STATUSES = ("pending", "paid", "declined", "cancelled")
 AUTHORIZATION_STATUSES = ("open", "captured", "voided", "expired")
 DEFAULT_AUTHORIZATION_TTL = 600
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def parse_ts(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
-
-
-def effective_status(authorization, now=None):
-    if authorization.status == "open":
-        now = now or datetime.now(timezone.utc)
-        if parse_ts(authorization.expires_at) <= now:
-            return "expired"
-    return authorization.status
-
-
-def remaining_amount(authorization, now=None):
-    if effective_status(authorization, now) == "open":
-        return authorization.amount - authorization.captured_amount
-    return 0
 
 
 def as_int(value, field="value") -> int:
@@ -74,6 +69,8 @@ def _empty_state():
         "authorization_ids": [],
         "operators": set(),
         "idem": {},
+        "revisions": {},
+        "snapshots": {},
     }
 
 
@@ -160,7 +157,14 @@ def build_reset_state(fixture):
             raise ApiError(422, "validation_failed", "invalid note")
         if visibility not in VISIBILITIES:
             raise ApiError(422, "validation_failed", "invalid visibility")
-        if not isinstance(created_at, str):
+        if isinstance(created_at, str):
+            try:
+                created_dt = parse_ts(created_at)
+            except Exception:
+                raise ApiError(422, "validation_failed", "invalid created_at")
+            if created_dt > datetime.now(timezone.utc):
+                raise ApiError(422, "validation_failed", "created_at must not be in the future")
+        else:
             created_at = now_iso()
         if pid in state["payments"]:
             raise ApiError(422, "validation_failed", "duplicate payment id")
@@ -178,6 +182,23 @@ def build_reset_state(fixture):
             authorization_id=entry.get("authorization_id"),
         )
         state["payment_ids"].append(pid)
+        state["revisions"][pid] = [
+            Revision(
+                revision=1,
+                amount=amount,
+                effective_at=created_at,
+                recorded_at=created_at,
+                reason="",
+            )
+        ]
+
+    net = {uid: 0 for uid in state["users"]}
+    for pid in state["payment_ids"]:
+        payment = state["payments"][pid]
+        net[payment.from_user_id] -= payment.amount
+        net[payment.to_user_id] += payment.amount
+    for uid, user in state["users"].items():
+        user.opening_balance = user.balance - net[uid]
 
     raw_requests = fixture.get("requests", [])
     if not isinstance(raw_requests, list):
@@ -272,6 +293,7 @@ def build_reset_state(fixture):
             payment_id=payment_id,
             payment_ids=list(payment_ids),
             created_at=entry.get("created_at") if isinstance(entry.get("created_at"), str) else now_iso(),
+            closed_at=entry.get("closed_at") if isinstance(entry.get("closed_at"), str) else None,
         )
         state["authorization_ids"].append(aid)
 
@@ -281,6 +303,7 @@ def build_reset_state(fixture):
 
 
 def _validate_holds(state):
+    selected = selected_map(state.get("revisions", {}), None)
     held = {}
     for authorization in state["authorizations"].values():
         if effective_status(authorization) == "open":
@@ -288,7 +311,9 @@ def _validate_holds(state):
                 authorization.amount - authorization.captured_amount
             )
     for user_id, amount in held.items():
-        if amount > state["users"][user_id].balance:
+        user = state["users"][user_id]
+        total = total_for(user.opening_balance, state["payments"], selected, user_id)
+        if amount > total:
             raise ApiError(422, "validation_failed", "open holds exceed the user balance")
 
 
@@ -328,10 +353,12 @@ def _state_from_export(data):
     state["currency"] = currency
     state["minor_units"] = minor_units
 
+    raw_openings = {}
     for entry in users:
         if not isinstance(entry, dict):
             raise ApiError(422, "validation_failed", "invalid user")
         uid = _require(entry, "id")
+        raw_openings[uid] = entry.get("opening_balance")
         handle = _require(entry, "handle")
         email = _require(entry, "email")
         password_hash = _require(entry, "password_hash")
@@ -393,6 +420,57 @@ def _state_from_export(data):
             authorization_id=entry.get("authorization_id"),
         )
 
+    raw_revisions = data.get("revisions")
+    if raw_revisions is not None and not isinstance(raw_revisions, list):
+        raise ApiError(422, "validation_failed", "invalid revisions")
+    if isinstance(raw_revisions, list):
+        for entry in raw_revisions:
+            if not isinstance(entry, dict):
+                raise ApiError(422, "validation_failed", "invalid revision")
+            pid = _require(entry, "payment_id")
+            if pid not in state["payments"]:
+                raise ApiError(422, "validation_failed", "unknown revision payment")
+            number = as_int(_require(entry, "revision"), "revision")
+            amount = as_int(_require(entry, "amount"), "amount")
+            effective_at = _require(entry, "effective_at")
+            recorded_at = _require(entry, "recorded_at")
+            reason = entry.get("reason", "")
+            if not isinstance(effective_at, str) or not isinstance(recorded_at, str) or not isinstance(reason, str):
+                raise ApiError(422, "validation_failed", "invalid revision")
+            state["revisions"].setdefault(pid, []).append(
+                Revision(
+                    revision=number,
+                    amount=amount,
+                    effective_at=effective_at,
+                    recorded_at=recorded_at,
+                    reason=reason,
+                )
+            )
+    for pid, payment in state["payments"].items():
+        revisions = state["revisions"].setdefault(pid, [])
+        if not revisions:
+            revisions.append(
+                Revision(
+                    revision=1,
+                    amount=payment.amount,
+                    effective_at=payment.created_at,
+                    recorded_at=payment.created_at,
+                    reason="",
+                )
+            )
+        revisions.sort(key=lambda item: item.revision)
+
+    net = {uid: 0 for uid in state["users"]}
+    for payment in state["payments"].values():
+        net[payment.from_user_id] -= payment.amount
+        net[payment.to_user_id] += payment.amount
+    for uid, user in state["users"].items():
+        supplied = raw_openings.get(uid)
+        if supplied is not None:
+            user.opening_balance = as_int(supplied, "opening_balance")
+        else:
+            user.opening_balance = user.balance - net[uid]
+
     for entry in data.get("authorizations", []) or []:
         if not isinstance(entry, dict):
             raise ApiError(422, "validation_failed", "invalid authorization")
@@ -432,6 +510,7 @@ def _state_from_export(data):
             payment_id=entry.get("payment_id"),
             payment_ids=list(payment_ids),
             created_at=entry.get("created_at") if isinstance(entry.get("created_at"), str) else now_iso(),
+            closed_at=entry.get("closed_at") if isinstance(entry.get("closed_at"), str) else None,
         )
 
     for entry in data.get("requests", []) or []:
@@ -540,6 +619,8 @@ class Store:
         self.authorization_ids = state["authorization_ids"]
         self.operators = state["operators"]
         self.idem = state["idem"]
+        self.revisions = state["revisions"]
+        self.snapshots = state["snapshots"]
 
     # ---- holds / availability (caller holds the lock) ----
     def effective_status(self, authorization):
@@ -548,16 +629,33 @@ class Store:
     def remaining(self, authorization):
         return remaining_amount(authorization)
 
+    def _all_authorizations(self):
+        return [self.authorizations[aid] for aid in self.authorization_ids]
+
+    def _captures_by_auth(self):
+        captures = {}
+        for pid in self.payment_ids:
+            payment = self.payments[pid]
+            if payment.authorization_id is not None:
+                captures.setdefault(payment.authorization_id, []).append(payment)
+        return captures
+
+    def total(self, user, as_of=None, known_at=None, inclusive=True):
+        selected = selected_map(self.revisions, known_at)
+        return total_for(
+            user.opening_balance, self.payments, selected, user.id, as_of=as_of, inclusive=inclusive
+        )
+
+    def held_at(self, user_id, as_of=None, known_at=None):
+        return held_for(
+            self._all_authorizations(), self._captures_by_auth(), user_id, as_of, known_at
+        )
+
     def held(self, user_id):
-        total = 0
-        for aid in self.authorization_ids:
-            authorization = self.authorizations[aid]
-            if authorization.from_user_id == user_id:
-                total += remaining_amount(authorization)
-        return total
+        return self.held_at(user_id, as_of=datetime.now(timezone.utc))
 
     def available(self, user):
-        return user.balance - self.held(user.id)
+        return self.total(user) - self.held(user.id)
 
     def gen_id(self, prefix):
         return prefix + secrets.token_hex(8)
@@ -625,8 +723,6 @@ class Store:
 
     def commit_payment(self, from_user, to_user, amount, note, visibility, request_id=None, settlement_id=None, created_at=None, authorization_id=None):
         pid = self.gen_id("p_")
-        from_user.balance -= amount
-        to_user.balance += amount
         payment = Payment(
             id=pid,
             from_user_id=from_user.id,
@@ -642,6 +738,15 @@ class Store:
         )
         self.payments[pid] = payment
         self.payment_ids.append(pid)
+        self.revisions[pid] = [
+            Revision(
+                revision=1,
+                amount=amount,
+                effective_at=payment.created_at,
+                recorded_at=payment.created_at,
+                reason="",
+            )
+        ]
         return payment
 
     def idem_get(self, user_id, key, method, path):
@@ -716,7 +821,111 @@ class Store:
             "payment_id": authorization.payment_id,
             "payment_ids": list(authorization.payment_ids),
             "created_at": authorization.created_at,
+            "closed_at": self._closed_at(authorization),
         }
+
+    def _closed_at(self, authorization):
+        if effective_status(authorization) == "open":
+            return None
+        if authorization.closed_at:
+            return authorization.closed_at
+        if effective_status(authorization) == "expired":
+            return authorization.expires_at
+        return authorization.created_at
+
+    def build_statement(self, user, from_dt, to_dt, known_at):
+        selected = selected_map(self.revisions, known_at)
+        if from_dt is None:
+            opening = user.opening_balance
+        else:
+            opening = total_for(
+                user.opening_balance, self.payments, selected, user.id, as_of=from_dt, inclusive=False
+            )
+        if to_dt is None:
+            closing = total_for(user.opening_balance, self.payments, selected, user.id)
+        else:
+            closing = total_for(
+                user.opening_balance, self.payments, selected, user.id, as_of=to_dt, inclusive=False
+            )
+        rows = []
+        for pid, revision in selected.items():
+            payment = self.payments.get(pid)
+            if payment is None or user.id not in (payment.from_user_id, payment.to_user_id):
+                continue
+            effective = parse_ts(revision.effective_at)
+            if from_dt is not None and effective < from_dt:
+                continue
+            if to_dt is not None and effective >= to_dt:
+                continue
+            delta = -revision.amount if payment.from_user_id == user.id else revision.amount
+            rows.append((effective, pid, payment, revision, delta))
+        rows.sort(key=lambda row: (row[0], row[1]))
+        entries = []
+        running = opening
+        for _effective, _pid, payment, revision, delta in rows:
+            running += delta
+            payload = self.payment_json(payment)
+            payload["amount"] = revision.amount
+            entries.append(
+                {
+                    "payment": payload,
+                    "delta": delta,
+                    "balance_after": running,
+                    "revision": revision.revision,
+                    "effective_at": revision.effective_at,
+                    "recorded_at": revision.recorded_at,
+                }
+            )
+        return opening, closing, entries
+
+    def create_snapshot(self, user_id, opening, closing, entries):
+        token = secrets.token_urlsafe(24)
+        self.snapshots[token] = {
+            "user_id": user_id,
+            "opening_balance": opening,
+            "closing_balance": closing,
+            "entries": entries,
+        }
+        return token
+
+    def apply_correction(self, user, payment, expected_revision, amount, effective_at, reason):
+        revisions = self.revisions.setdefault(payment.id, [])
+        if not revisions:
+            revisions.append(
+                Revision(
+                    revision=1,
+                    amount=payment.amount,
+                    effective_at=payment.created_at,
+                    recorded_at=payment.created_at,
+                    reason="",
+                )
+            )
+        latest = revisions[-1]
+        if expected_revision != latest.revision:
+            raise ApiError(409, "stale_revision", "expected_revision is stale")
+        delta = amount - latest.amount
+        if delta > 0:
+            if self.available(self.users[payment.from_user_id]) < delta:
+                raise ApiError(409, "insufficient_funds", "insufficient funds")
+        elif delta < 0:
+            if self.available(self.users[payment.to_user_id]) < -delta:
+                raise ApiError(409, "insufficient_funds", "insufficient funds")
+        candidate = Revision(
+            revision=latest.revision + 1,
+            amount=amount,
+            effective_at=effective_at,
+            recorded_at=next_recorded_at(latest.recorded_at),
+            reason=reason,
+        )
+        trial = {pid: list(items) for pid, items in self.revisions.items()}
+        trial[payment.id] = revisions + [candidate]
+        openings = {uid: item.opening_balance for uid, item in self.users.items()}
+        if historical_overdraft(
+            openings, self.payments, trial, self._all_authorizations(), self._captures_by_auth()
+        ):
+            raise ApiError(409, "historical_overdraft", "correction would overdraw a historical balance")
+        revisions.append(candidate)
+        return candidate
 
     def export_state(self):
         return {
@@ -732,7 +941,8 @@ class Store:
                         "password_hash": user.password_hash,
                         "display_name": user.display_name,
                         "handle": user.handle,
-                        "balance": user.balance,
+                        "balance": self.total(user),
+                        "opening_balance": user.opening_balance,
                         "tokens": sorted(user.tokens),
                     }
                     for user in self.users.values()
@@ -745,6 +955,18 @@ class Store:
                 "authorization_ttl_seconds": self.authorization_ttl_seconds,
                 "authorizations": [asdict(authorization) for authorization in self.authorizations.values()],
                 "authorization_order": list(self.authorization_ids),
+                "revisions": [
+                    {
+                        "payment_id": pid,
+                        "revision": revision.revision,
+                        "amount": revision.amount,
+                        "effective_at": revision.effective_at,
+                        "recorded_at": revision.recorded_at,
+                        "reason": revision.reason,
+                    }
+                    for pid, revisions in self.revisions.items()
+                    for revision in revisions
+                ],
                 "operators": sorted(self.operators),
                 "idempotency": [asdict(record) for record in self.idem.values()],
             },

@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -10,7 +11,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import security
-from models import ApiError, Settlement
+from ledger import parse_instant, revision_json
+from models import ApiError, Revision, Settlement
 from store import (
     AUTHORIZATION_STATUSES,
     STATUSES,
@@ -203,14 +205,16 @@ async def optional_user(request):
 
 
 def current_user_context(user):
+    total = store.total(user)
+    held = store.held(user.id)
     return {
         "user_id": user.id,
         "display_name": user.display_name,
         "handle": user.handle,
-        "balance": user.balance,
-        "total": user.balance,
-        "available": store.available(user),
-        "held": store.held(user.id),
+        "balance": total,
+        "total": total,
+        "available": total - held,
+        "held": held,
         "currency": store.currency,
         "minor_units": store.minor_units,
     }
@@ -407,19 +411,31 @@ async def logout():
 @app.get("/me")
 async def me(request: Request):
     user = await authenticate(request)
+    raw_as_of = request.query_params.get("as_of")
+    raw_known_at = request.query_params.get("known_at")
     async with store.lock:
         user = current_user(user.id)
-        return {
+        response = {
             "user_id": user.id,
             "display_name": user.display_name,
             "handle": user.handle,
-            "balance": user.balance,
-            "total": user.balance,
-            "available": store.available(user),
-            "held": store.held(user.id),
             "currency": store.currency,
             "minor_units": store.minor_units,
         }
+        if raw_as_of is None and raw_known_at is None:
+            total = store.total(user)
+            held = store.held(user.id)
+        else:
+            as_of = parse_instant(raw_as_of, "as_of") if raw_as_of is not None else datetime.now(timezone.utc)
+            known_at = parse_instant(raw_known_at, "known_at") if raw_known_at is not None else None
+            total = store.total(user, as_of=as_of, known_at=known_at)
+            held = store.held_at(user.id, as_of=as_of, known_at=known_at)
+            if raw_as_of is not None:
+                response["as_of"] = raw_as_of
+            if raw_known_at is not None:
+                response["known_at"] = raw_known_at
+        response.update({"balance": total, "total": total, "available": total - held, "held": held})
+        return response
 
 
 @app.post("/payments")
@@ -806,6 +822,7 @@ async def capture_authorization(request: Request, authorization_id: str):
         authorization.payment_ids.append(payment.id)
         if final or amount == remaining:
             authorization.status = "captured"
+            authorization.closed_at = payment.created_at
         response = store.payment_json(payment)
         store.idem_put(user.id, key, "POST", path, body, response, 201)
     return JsonResponse(response, status_code=201)
@@ -827,6 +844,7 @@ async def void_authorization(request: Request, authorization_id: str):
         if status in ("captured", "expired"):
             raise ApiError(409, "authorization_not_open", "authorization is not open")
         authorization.status = "voided"
+        authorization.closed_at = now_iso()
         return store.authorization_json(authorization)
 
 
@@ -862,6 +880,114 @@ async def list_authorizations(request: Request):
             "authorizations": [store.authorization_json(item) for item in page],
             "has_more": len(items) > offset + limit,
         }
+
+
+# --------------------------------------------------------------------------- #
+# Stage 3: statements and corrections
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/statement")
+async def statement(request: Request):
+    user = await authenticate(request)
+    limit, offset = pagination(request)
+    raw_snapshot = request.query_params.get("snapshot")
+    async with store.lock:
+        user = current_user(user.id)
+        if raw_snapshot is not None:
+            if any(request.query_params.get(name) is not None for name in ("from", "to", "known_at")):
+                raise ApiError(422, "validation_failed", "snapshot cannot be combined with from, to or known_at")
+            snapshot = store.snapshots.get(raw_snapshot)
+            if snapshot is None or snapshot["user_id"] != user.id:
+                raise ApiError(404, "not_found", "unknown snapshot")
+            opening = snapshot["opening_balance"]
+            closing = snapshot["closing_balance"]
+            entries = snapshot["entries"]
+            token = raw_snapshot
+        else:
+            raw_from = request.query_params.get("from")
+            raw_to = request.query_params.get("to")
+            raw_known_at = request.query_params.get("known_at")
+            from_dt = parse_instant(raw_from, "from") if raw_from is not None else None
+            to_dt = parse_instant(raw_to, "to") if raw_to is not None else None
+            known_at = parse_instant(raw_known_at, "known_at") if raw_known_at is not None else None
+            opening, closing, entries = store.build_statement(user, from_dt, to_dt, known_at)
+            token = store.create_snapshot(user.id, opening, closing, entries)
+        return {
+            "opening_balance": opening,
+            "entries": entries[offset: offset + limit],
+            "closing_balance": closing,
+            "has_more": offset + limit < len(entries),
+            "snapshot": token,
+        }
+
+
+@app.post("/payments/{payment_id}/corrections")
+async def correct_payment(request: Request, payment_id: str):
+    user = await authenticate(request)
+    key = idempotency_key(request)
+    body = await read_json_object(request)
+    path = request.url.path
+    async with store.lock:
+        user = current_user(user.id)
+        replay = replay_or_conflict(user.id, key, "POST", path, body)
+        if replay is not None:
+            return replay
+        payment = store.payments.get(payment_id)
+        if payment is None:
+            raise ApiError(404, "not_found", "no such payment")
+        if payment.from_user_id != user.id:
+            raise ApiError(403, "forbidden", "only the original sender may correct")
+        if payment.settlement_id is not None or payment.authorization_id is not None:
+            raise ApiError(422, "linked_payment_immutable", "linked payments cannot be corrected")
+        expected_revision = as_int(required_key(body, "expected_revision"), "expected_revision")
+        if expected_revision < 1:
+            raise ApiError(422, "validation_failed", "expected_revision must be positive")
+        amount = as_int(required_key(body, "amount"), "amount")
+        if amount < 0 or amount > MAX_AMOUNT:
+            raise ApiError(422, "validation_failed", "amount out of range")
+        reason = required_key(body, "reason")
+        if not isinstance(reason, str) or not (1 <= len(reason) <= 200):
+            raise ApiError(422, "validation_failed", "reason must be 1 to 200 characters")
+        effective_raw = required_key(body, "effective_at")
+        effective_dt = parse_instant(effective_raw, "effective_at")
+        if effective_dt > datetime.now(timezone.utc):
+            raise ApiError(422, "validation_failed", "effective_at must not be in the future")
+        revision = store.apply_correction(
+            user, payment, expected_revision, amount, effective_raw, reason
+        )
+        response = {
+            "payment_id": payment.id,
+            "revision": revision.revision,
+            "amount": revision.amount,
+            "effective_at": revision.effective_at,
+            "recorded_at": revision.recorded_at,
+            "reason": revision.reason,
+        }
+        store.idem_put(user.id, key, "POST", path, body, response, 201)
+    return JsonResponse(response, status_code=201)
+
+
+@app.get("/payments/{payment_id}/revisions")
+async def list_revisions(request: Request, payment_id: str):
+    user = await authenticate(request)
+    async with store.lock:
+        user = current_user(user.id)
+        payment = store.payments.get(payment_id)
+        if payment is None or user.id not in (payment.from_user_id, payment.to_user_id):
+            raise ApiError(404, "not_found", "no such payment")
+        revisions = store.revisions.get(payment_id)
+        if not revisions:
+            revisions = [
+                Revision(
+                    revision=1,
+                    amount=payment.amount,
+                    effective_at=payment.created_at,
+                    recorded_at=payment.created_at,
+                    reason="",
+                )
+            ]
+        return {"revisions": [revision_json(item) for item in revisions]}
 
 
 # --------------------------------------------------------------------------- #

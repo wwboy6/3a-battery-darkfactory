@@ -20,6 +20,7 @@ class User:
     display_name: str
     handle: str
     balance: int = 0
+    opening_balance: int = 0
     tokens: Set[str] = field(default_factory=set)
 
 
@@ -36,6 +37,15 @@ class Payment:
     settlement_id: Optional[str]
     created_at: str
     authorization_id: Optional[str] = None
+
+
+@dataclass
+class Revision:
+    revision: int
+    amount: int
+    effective_at: str
+    recorded_at: str
+    reason: str = ""
 
 
 @dataclass
@@ -73,6 +83,7 @@ class Authorization:
     payment_id: Optional[str]
     payment_ids: List[str]
     created_at: str
+    closed_at: Optional[str] = None
 
 
 @dataclass
