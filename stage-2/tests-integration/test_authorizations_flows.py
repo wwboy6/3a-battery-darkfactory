@@ -119,7 +119,10 @@ def test_default_capture_moves_all_and_closes_hold(login_browser, api, reset, se
     assert payment["amount"] == 2000
     assert payment["note"] == "dep" and payment["visibility"] == "private"
 
-    assert me(api, tokens["ada"])["available"] == 10000 and me(api, tokens["ada"])["held"] == 0
+    # Capture spends the reserved funds: total and held fall together, so
+    # available stays at 10000 - 2000 = 8000 rather than returning to 10000.
+    ada = me(api, tokens["ada"])
+    assert ada["total"] == 8000 and ada["held"] == 0 and ada["available"] == 8000
     assert me(api, tokens["bob"])["total"] == 4500
 
     browser, _ = login_browser("bob")  # receiver
@@ -137,7 +140,8 @@ def test_partial_final_capture_releases_remainder(login_browser, api, reset, see
     tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     payment = payload(expect(capture(api, tokens["bob"], "a_1", {"amount": 1500}), 201))
     assert payment["amount"] == 1500
-    assert me(api, tokens["ada"])["available"] == 8500 and me(api, tokens["ada"])["held"] == 0
+    ada = me(api, tokens["ada"])
+    assert ada["total"] == 8500 and ada["held"] == 0 and ada["available"] == 8500
     browser, _ = login_browser("ada")
     listing = parse_html(browser.get("/authorizations", accept="text/html").text)
     assert testid_text(listing, "authorization-captured-a_1") == "15.00 EUR"
@@ -151,7 +155,8 @@ def test_nonfinal_capture_keeps_remainder_held(login_browser, api, reset, seed):
     assert auth["status"] == "open"
     assert auth["captured_amount"] == 700 and auth["remaining_amount"] == 1300
     assert auth["payment_ids"] == [first["payment_id"]]
-    assert me(api, tokens["ada"])["available"] == 8700 and me(api, tokens["ada"])["held"] == 1300
+    ada = me(api, tokens["ada"])
+    assert ada["total"] == 9300 and ada["held"] == 1300 and ada["available"] == 8000
 
     browser, _ = login_browser("bob")
     listing = parse_html(browser.get("/authorizations", accept="text/html").text)
@@ -161,7 +166,8 @@ def test_nonfinal_capture_keeps_remainder_held(login_browser, api, reset, seed):
     # Capturing the whole remaining amount closes it even with final=false.
     second = payload(expect(capture(api, tokens["bob"], "a_1", {"amount": 1300, "final": False}), 201))
     assert auth_json(api, tokens["ada"], "a_1")["status"] == "captured"
-    assert me(api, tokens["ada"])["available"] == 10000 and me(api, tokens["ada"])["held"] == 0
+    ada = me(api, tokens["ada"])
+    assert ada["total"] == 8000 and ada["held"] == 0 and ada["available"] == 8000
     assert me(api, tokens["bob"])["total"] == 4500
     assert second["amount"] == 1300
 
