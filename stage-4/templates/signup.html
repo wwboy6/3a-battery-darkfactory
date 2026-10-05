@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Create your account - Pocketful{% endblock %}
+{% block content %}
+<div class="auth">
+  <div class="auth__card">
+    <div class="auth__brand"><span class="brand__mark" aria-hidden="true"></span> Pocketful</div>
+    <h1 class="auth__title">Create your account</h1>
+    <p class="auth__sub">Send, request and split money with the people you know.</p>
+    {% if error %}<p class="alert alert--error" data-testid="auth-error">{{ error }}</p>{% endif %}
+    <form method="post" action="/signup" novalidate>
+      <div class="field">
+        <label class="field__label" for="signup-display-name">Display name</label>
+        <input class="input" id="signup-display-name" name="display_name" type="text" autocomplete="name" required data-testid="signup-display-name">
+      </div>
+      <div class="field">
+        <label class="field__label" for="signup-email">Email</label>
+        <input class="input" id="signup-email" name="email" type="email" autocomplete="email" required data-testid="signup-email">
+      </div>
+      <div class="field">
+        <label class="field__label" for="signup-password">Password</label>
+        <input class="input" id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" required data-testid="signup-password">
+        <span class="field__hint">At least 8 characters.</span>
+      </div>
+      <button class="btn btn--primary btn--block" type="submit" data-testid="signup-submit">Create account</button>
+    </form>
+    <p class="auth__foot">Already have an account? <a href="/login">Sign in</a></p>
+  </div>
+</div>
+{% endblock %}
