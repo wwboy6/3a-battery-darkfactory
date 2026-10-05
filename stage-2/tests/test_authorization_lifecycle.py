@@ -93,6 +93,11 @@ def test_create_note_over_200_is_422(api, tokens):
     expect(authorize(api, tokens["ada"], "bob", 1, note="x" * 201), 422, "validation_failed")
 
 
+@pytest.mark.parametrize("note", [None, 12, True, []])
+def test_create_note_non_string_is_422(api, tokens, note):
+    expect(authorize(api, tokens["ada"], "bob", 1, note=note), 422, "validation_failed")
+
+
 @pytest.mark.parametrize("visibility", ["secret", "Public", "", 1, None])
 def test_create_invalid_visibility_is_422(api, tokens, visibility):
     expect(authorize(api, tokens["ada"], "bob", 1, visibility=visibility), 422, "validation_failed")

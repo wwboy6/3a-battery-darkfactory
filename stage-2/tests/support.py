@@ -345,11 +345,11 @@ AUTHORIZATION_FIELDS = {
 }
 
 
-def authorize(api, token, to_handle="bob", amount=1000, *, note=None, visibility=None, key=None, **extra):
+def authorize(api, token, to_handle="bob", amount=1000, *, note=_UNSET, visibility=_UNSET, key=None, **extra):
     body = {"to_handle": to_handle, "amount": amount}
-    if note is not None:
+    if note is not _UNSET:
         body["note"] = note
-    if visibility is not None:
+    if visibility is not _UNSET:
         body["visibility"] = visibility
     body.update(extra)
     return api.post("/authorizations", token=token, idem=key or unique("auth"), body=body)
