@@ -72,9 +72,30 @@ def default_state(reset):
 
 
 @pytest.fixture
-def tokens(api):
-    """Bearer tokens for the three seeded users (ada, bob, cy)."""
+def tokens(api, default_state):
+    """Bearer tokens for the three seeded users (ada, bob, cy).
+
+    Depends on ``default_state`` so the tokens are always minted *after* the
+    autouse reset: ``/_test/reset`` clears every token, so minting before a
+    reset would leave the suite holding dead credentials.
+    """
     return tokens_for(api)
+
+
+@pytest.fixture
+def seed(api, reset):
+    """Reset to a custom fixture and mint fresh tokens for that state.
+
+    ``/_test/reset`` installs fresh state and clears ``token_index`` (stage-1
+    contract), so any test that resets inside its body must re-authenticate.
+    Returns ``{handle: token}`` valid for the new state.
+    """
+
+    def _seed(fixture, handles=("ada", "bob", "cy")):
+        reset(fixture)
+        return tokens_for(api, handles)
+
+    return _seed
 
 
 @pytest.fixture

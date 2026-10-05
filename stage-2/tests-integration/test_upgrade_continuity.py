@@ -143,20 +143,20 @@ def test_stage1_export_import_keeps_clients_and_retries(login_browser, api, toke
     assert all(p["authorization_id"] is None for p in payload(feed)["payments"])
 
 
-def test_stage1_import_drops_holds_and_restores_default_ttl(api, ada_token, reset):
-    reset(make_fixture())
-    create_authorization(api, ada_token, {"to_handle": "bob", "amount": 1500})
+def test_stage1_import_drops_holds_and_restores_default_ttl(api, reset, seed):
+    tokens = seed(make_fixture())
+    create_authorization(api, tokens["ada"], {"to_handle": "bob", "amount": 1500})
     snapshot = stage1_shaped_export(api)
     expect(import_state(api, snapshot), 204)
 
     # No authorizations survive a stage-1 export.
-    listing = api.get("/authorizations", token=ada_token)
+    listing = api.get("/authorizations", token=tokens["ada"])
     expect(listing, 200)
     assert payload(listing)["authorizations"] == []
-    assert me(api, ada_token)["held"] == 0
+    assert me(api, tokens["ada"])["held"] == 0
 
     # Missing authorization_ttl_seconds defaults to 600 for new holds.
-    created = create_authorization(api, ada_token, {"to_handle": "bob", "amount": 100})
+    created = create_authorization(api, tokens["ada"], {"to_handle": "bob", "amount": 100})
     delta = (
         datetime.fromisoformat(created["expires_at"])
         - datetime.fromisoformat(created["created_at"])

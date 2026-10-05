@@ -28,8 +28,8 @@ def total_sum(api, tokens):
     return sum(me(api, tokens[h])["total"] for h in ("ada", "bob", "cy"))
 
 
-def test_concurrent_payments_respect_available_not_total(api, tokens, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_concurrent_payments_respect_available_not_total(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     assert me(api, tokens["ada"])["available"] == 8000
 
     def worker(_):
@@ -55,8 +55,8 @@ def test_concurrent_payments_respect_available_not_total(api, tokens, reset):
     assert total_sum(api, tokens) == 12500
 
 
-def test_concurrent_identical_capture_moves_money_once(api, tokens, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_concurrent_identical_capture_moves_money_once(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     key = unique("conc-cap")
     body = {}
 
@@ -82,8 +82,8 @@ def test_concurrent_identical_capture_moves_money_once(api, tokens, reset):
     assert total_sum(api, tokens) == 12500
 
 
-def test_concurrent_partial_captures_never_exceed_authorized_amount(api, tokens, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_concurrent_partial_captures_never_exceed_authorized_amount(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
 
     def worker(_):
         return Api().post(
@@ -105,8 +105,8 @@ def test_concurrent_partial_captures_never_exceed_authorized_amount(api, tokens,
     assert total_sum(api, tokens) == 12500
 
 
-def test_concurrent_holds_cannot_overdraw_wallet(api, tokens, reset):
-    reset(make_fixture())
+def test_concurrent_holds_cannot_overdraw_wallet(api, reset, seed):
+    tokens = seed(make_fixture())
 
     def worker(_):
         return Api().post(
@@ -131,8 +131,8 @@ def test_concurrent_holds_cannot_overdraw_wallet(api, tokens, reset):
     assert total_sum(api, tokens) == 12500
 
 
-def test_payments_and_capture_race_keep_invariants(api, tokens, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_payments_and_capture_race_keep_invariants(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
 
     def payer(_):
         return Api().post(

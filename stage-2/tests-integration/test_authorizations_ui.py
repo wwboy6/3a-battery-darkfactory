@@ -69,10 +69,8 @@ def test_authorize_form_renders_with_required_fields(login_browser):
 # --------------------------------------------------------------------------- #
 
 
-def test_open_hold_renders_amount_expiry_and_party_controls(
-    login_browser, api, ada_token, bob_token, reset
-):
-    reset(
+def test_open_hold_renders_amount_expiry_and_party_controls(login_browser, api, reset, seed):
+    tokens = seed(
         make_fixture(
             authorizations=[
                 seeded_authorization(
@@ -81,7 +79,7 @@ def test_open_hold_renders_amount_expiry_and_party_controls(
             ]
         )
     )
-    expected = find_authorization(api, ada_token, "a_1")
+    expected = find_authorization(api, tokens["ada"], "a_1")
     assert expected["status"] == "open"
     assert_rfc3339(expected["expires_at"])
 
@@ -103,13 +101,11 @@ def test_open_hold_renders_amount_expiry_and_party_controls(
     assert_absent(document, "authorization-void-a_1")
 
 
-def test_open_hold_prefill_uses_remaining_after_partial_capture(
-    login_browser, api, bob_token, reset
-):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_open_hold_prefill_uses_remaining_after_partial_capture(login_browser, api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     capture = api.post(
         "/authorizations/a_1/capture",
-        token=bob_token,
+        token=tokens["bob"],
         idem="capture-partial",
         body={"amount": 500, "final": False},
     )
@@ -127,13 +123,13 @@ def test_empty_authorizations_state(login_browser):
     assert_absent(document, "authorization-item-a_1")
 
 
-def test_authorization_hidden_from_uninvolved_user(login_browser, api, cy_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_authorization_hidden_from_uninvolved_user(login_browser, api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     browser, _ = login_browser("cy")
     document = parse_html(browser.get("/authorizations", accept="text/html").text)
     assert_absent(document, "authorization-item-a_1")
     require_testid(document, "empty-authorizations")
-    assert authorizations_json(api, cy_token) == []
+    assert authorizations_json(api, tokens["cy"]) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -141,17 +137,15 @@ def test_authorization_hidden_from_uninvolved_user(login_browser, api, cy_token,
 # --------------------------------------------------------------------------- #
 
 
-def test_seeded_captured_authorization_renders_captured_amount(
-    login_browser, api, ada_token, reset
-):
-    reset(
+def test_seeded_captured_authorization_renders_captured_amount(login_browser, api, reset, seed):
+    tokens = seed(
         make_fixture(
             authorizations=[
                 seeded_authorization("a_1", "u_ada", "u_bob", 2000, status="captured")
             ]
         )
     )
-    expected = find_authorization(api, ada_token, "a_1")
+    expected = find_authorization(api, tokens["ada"], "a_1")
     assert expected["status"] == "captured"
     browser, _ = login_browser("ada")
     document = parse_html(browser.get("/authorizations", accept="text/html").text)
@@ -176,10 +170,8 @@ def test_seeded_voided_authorization_renders_without_controls(login_browser, res
     assert_absent(document, "authorization-void-a_1")
 
 
-def test_seeded_expired_authorization_renders_expired_and_releases_funds(
-    login_browser, api, ada_token, reset
-):
-    reset(
+def test_seeded_expired_authorization_renders_expired_and_releases_funds(login_browser, api, reset, seed):
+    tokens = seed(
         make_fixture(
             authorizations=[
                 seeded_authorization(
@@ -188,12 +180,12 @@ def test_seeded_expired_authorization_renders_expired_and_releases_funds(
             ]
         )
     )
-    account = me(api, ada_token)
+    account = me(api, tokens["ada"])
     assert account["held"] == 0 and account["available"] == 10000
-    assert [a["status"] for a in authorizations_json(api, ada_token, status="expired")] == [
+    assert [a["status"] for a in authorizations_json(api, tokens["ada"], status="expired")] == [
         "expired"
     ]
-    assert authorizations_json(api, ada_token, status="open") == []
+    assert authorizations_json(api, tokens["ada"], status="open") == []
 
     browser, _ = login_browser("ada")
     document = parse_html(browser.get("/authorizations", accept="text/html").text)

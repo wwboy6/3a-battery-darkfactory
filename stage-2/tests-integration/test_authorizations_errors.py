@@ -37,11 +37,11 @@ def json_equals(a, b):
 # --------------------------------------------------------------------------- #
 
 
-def test_authorize_beyond_available_is_refused(api, ada_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_cy", 9000)]))
-    refused = create(api, ada_token, {"to_handle": "bob", "amount": 2000})
+def test_authorize_beyond_available_is_refused(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_cy", 9000)]))
+    refused = create(api, tokens["ada"], {"to_handle": "bob", "amount": 2000})
     expect(refused, 409, "insufficient_funds")
-    assert me(api, ada_token)["available"] == 1000  # nothing changed
+    assert me(api, tokens["ada"])["available"] == 1000  # nothing changed
 
 
 def test_authorize_requires_idempotency_key(api, ada_token):
@@ -83,28 +83,28 @@ def test_authorize_replay_moves_hold_once(api, ada_token):
 # --------------------------------------------------------------------------- #
 
 
-def test_capture_requires_idempotency_key(api, ada_token, bob_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
-    resp = api.post("/authorizations/a_1/capture", token=bob_token, body={})
+def test_capture_requires_idempotency_key(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+    resp = api.post("/authorizations/a_1/capture", token=tokens["bob"], body={})
     expect(resp, 400, "missing_idempotency_key")
 
 
-def test_capture_amount_validation(api, ada_token, bob_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_capture_amount_validation(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     for bad in (0, -5, 1.5, "100", True):
-        expect(capture(api, bob_token, "a_1", {"amount": bad}), 422, "validation_failed")
+        expect(capture(api, tokens["bob"], "a_1", {"amount": bad}), 422, "validation_failed")
 
 
-def test_capture_above_remaining_is_refused(api, ada_token, bob_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
-    expect(capture(api, bob_token, "a_1", {"amount": 2001}), 422, "capture_exceeds_authorization")
-    assert me(api, ada_token)["held"] == 2000  # nothing captured
+def test_capture_above_remaining_is_refused(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+    expect(capture(api, tokens["bob"], "a_1", {"amount": 2001}), 422, "capture_exceeds_authorization")
+    assert me(api, tokens["ada"])["held"] == 2000  # nothing captured
 
 
-def test_capture_forbidden_for_non_receiver(api, ada_token, bob_token, cy_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
-    expect(capture(api, ada_token, "a_1", {"amount": 100}), 403, "forbidden")  # payer, not receiver
-    expect(capture(api, cy_token, "a_1", {"amount": 100}), 403, "forbidden")  # neither party
+def test_capture_forbidden_for_non_receiver(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+    expect(capture(api, tokens["ada"], "a_1", {"amount": 100}), 403, "forbidden")  # payer, not receiver
+    expect(capture(api, tokens["cy"], "a_1", {"amount": 100}), 403, "forbidden")  # neither party
 
 
 def test_capture_unknown_authorization_is_404(api, ada_token, bob_token):
@@ -112,22 +112,22 @@ def test_capture_unknown_authorization_is_404(api, ada_token, bob_token):
     expect(capture(api, ada_token, "a_missing", {"amount": 100}), 404, "not_found")
 
 
-def test_capture_expired_hold_reports_authorization_expired(api, bob_token, reset):
-    reset(
+def test_capture_expired_hold_reports_authorization_expired(api, reset, seed):
+    tokens = seed(
         make_fixture(
             authorizations=[
                 seeded_authorization("a_1", "u_ada", "u_bob", 2000, expires_at=LONG_AGO)
             ]
         )
     )
-    expect(capture(api, bob_token, "a_1", {"amount": 100}), 409, "authorization_expired")
+    expect(capture(api, tokens["bob"], "a_1", {"amount": 100}), 409, "authorization_expired")
 
 
-def test_capture_closed_hold_reports_not_open_before_amount_errors(api, ada_token, bob_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000, status="voided")]))
+def test_capture_closed_hold_reports_not_open_before_amount_errors(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000, status="voided")]))
     # status precedence: a closed hold is 409 even with an otherwise-invalid amount.
-    expect(capture(api, bob_token, "a_1", {"amount": 0}), 409, "authorization_not_open")
-    expect(capture(api, bob_token, "a_1", {"amount": 99999}), 409, "authorization_not_open")
+    expect(capture(api, tokens["bob"], "a_1", {"amount": 0}), 409, "authorization_not_open")
+    expect(capture(api, tokens["bob"], "a_1", {"amount": 99999}), 409, "authorization_not_open")
 
 
 # --------------------------------------------------------------------------- #
@@ -135,31 +135,31 @@ def test_capture_closed_hold_reports_not_open_before_amount_errors(api, ada_toke
 # --------------------------------------------------------------------------- #
 
 
-def test_void_forbidden_for_non_payer(api, ada_token, bob_token, cy_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
-    expect(api.post("/authorizations/a_1/void", token=bob_token), 403, "forbidden")
-    expect(api.post("/authorizations/a_1/void", token=cy_token), 403, "forbidden")
-    assert me(api, ada_token)["held"] == 2000  # still held
+def test_void_forbidden_for_non_payer(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+    expect(api.post("/authorizations/a_1/void", token=tokens["bob"]), 403, "forbidden")
+    expect(api.post("/authorizations/a_1/void", token=tokens["cy"]), 403, "forbidden")
+    assert me(api, tokens["ada"])["held"] == 2000  # still held
 
 
 def test_void_unknown_authorization_is_404(api, ada_token):
     expect(api.post("/authorizations/a_missing/void", token=ada_token), 404, "not_found")
 
 
-def test_void_captured_hold_is_not_open(api, ada_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000, status="captured")]))
-    expect(api.post("/authorizations/a_1/void", token=ada_token), 409, "authorization_not_open")
+def test_void_captured_hold_is_not_open(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000, status="captured")]))
+    expect(api.post("/authorizations/a_1/void", token=tokens["ada"]), 409, "authorization_not_open")
 
 
-def test_void_clock_expired_hold_is_not_open(api, ada_token, reset):
-    reset(
+def test_void_clock_expired_hold_is_not_open(api, reset, seed):
+    tokens = seed(
         make_fixture(
             authorizations=[
                 seeded_authorization("a_1", "u_ada", "u_bob", 2000, expires_at=LONG_AGO)
             ]
         )
     )
-    expect(api.post("/authorizations/a_1/void", token=ada_token), 409, "authorization_not_open")
+    expect(api.post("/authorizations/a_1/void", token=tokens["ada"]), 409, "authorization_not_open")
 
 
 # --------------------------------------------------------------------------- #
@@ -167,23 +167,23 @@ def test_void_clock_expired_hold_is_not_open(api, ada_token, reset):
 # --------------------------------------------------------------------------- #
 
 
-def test_capture_replay_moves_money_once(api, ada_token, bob_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_capture_replay_moves_money_once(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     key = unique("cap-replay")
     body = {"amount": 500, "final": False}
-    first = capture(api, bob_token, "a_1", body, key=key)
+    first = capture(api, tokens["bob"], "a_1", body, key=key)
     expect(first, 201)
-    replay = capture(api, bob_token, "a_1", body, key=key)
+    replay = capture(api, tokens["bob"], "a_1", body, key=key)
     expect(replay, 200)
     assert json_equals(payload(replay), payload(first))
-    assert me(api, bob_token)["total"] == 3000  # moved once
-    assert me(api, ada_token)["held"] == 1500
-    expect(capture(api, bob_token, "a_1", {"amount": 600, "final": False}, key=key), 409, "idempotency_key_reuse")
+    assert me(api, tokens["bob"])["total"] == 3000  # moved once
+    assert me(api, tokens["ada"])["held"] == 1500
+    expect(capture(api, tokens["bob"], "a_1", {"amount": 600, "final": False}, key=key), 409, "idempotency_key_reuse")
 
 
-def test_capture_body_equality_is_json_value_equality(api, ada_token, bob_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_capture_body_equality_is_json_value_equality(api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     key = unique("cap-body")
-    expect(capture(api, bob_token, "a_1", {}, key=key), 201)
+    expect(capture(api, tokens["bob"], "a_1", {}, key=key), 201)
     # {} and {"amount": N} are different JSON bodies even though they mean the same capture.
-    expect(capture(api, bob_token, "a_1", {"amount": 2000}, key=key), 409, "idempotency_key_reuse")
+    expect(capture(api, tokens["bob"], "a_1", {"amount": 2000}, key=key), 409, "idempotency_key_reuse")

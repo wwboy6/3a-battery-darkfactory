@@ -191,8 +191,8 @@ def test_unsigned_wallet_route_does_not_leak_user_data(browser):
 # --------------------------------------------------------------------------- #
 
 
-def test_requests_html_for_browser_and_json_for_api(login_browser, api, reset, ada_token):
-    reset(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200, "taxi")]))
+def test_requests_html_for_browser_and_json_for_api(login_browser, api, reset, seed):
+    tokens = seed(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200, "taxi")]))
     browser, _ = login_browser("ada")
 
     page = browser.get("/requests", accept="text/html")
@@ -207,16 +207,16 @@ def test_requests_html_for_browser_and_json_for_api(login_browser, api, reset, a
     require_testid(document, "request-pay-rq_1")
 
     # The API stays JSON: no Accept: text/html.
-    api_resp = api.get("/requests", token=ada_token)
+    api_resp = api.get("/requests", token=tokens["ada"])
     expect(api_resp, 200)
     assert is_json(api_resp)
     body = payload(api_resp)
     assert [r["request_id"] for r in body["requests"]] == ["rq_1"]
 
 
-def test_requests_default_to_json_without_html_accept(api, reset, ada_token):
-    reset(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200)]))
-    resp = api.get("/requests", token=ada_token, headers={"Accept": "application/json"})
+def test_requests_default_to_json_without_html_accept(api, reset, seed):
+    tokens = seed(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200)]))
+    resp = api.get("/requests", token=tokens["ada"], headers={"Accept": "application/json"})
     expect(resp, 200)
     assert is_json(resp)
     assert "requests" in payload(resp)
@@ -228,12 +228,10 @@ def test_requests_html_requires_authentication(browser):
     assert_absent(document, "incoming-list")
 
 
-def test_authorizations_html_for_browser_and_json_for_api(
-    login_browser, api, reset, ada_token
-):
+def test_authorizations_html_for_browser_and_json_for_api(login_browser, api, reset, seed):
     from support import seeded_authorization
 
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     browser, _ = login_browser("ada")
 
     page = browser.get("/authorizations", accept="text/html")
@@ -243,7 +241,7 @@ def test_authorizations_html_for_browser_and_json_for_api(
     require_testid(document, "authorization-list")
     require_testid(document, "authorization-item-a_1")
 
-    api_resp = api.get("/authorizations", token=ada_token)
+    api_resp = api.get("/authorizations", token=tokens["ada"])
     expect(api_resp, 200)
     assert is_json(api_resp)
     ids = [a["authorization_id"] for a in payload(api_resp)["authorizations"]]

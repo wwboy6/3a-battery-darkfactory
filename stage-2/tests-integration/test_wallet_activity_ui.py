@@ -60,15 +60,15 @@ def test_wallet_numbers_match_api_with_no_holds(login_browser, api, ada_token):
     assert_absent(document, "wallet-held")
 
 
-def test_wallet_numbers_include_seeded_hold(login_browser, api, ada_token, reset):
-    reset(
+def test_wallet_numbers_include_seeded_hold(login_browser, api, reset, seed):
+    tokens = seed(
         make_fixture(
             authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]
         )
     )
     browser, _ = login_browser("ada")
     document = parse_html(browser.get("/", accept="text/html").text)
-    account = me(api, ada_token)
+    account = me(api, tokens["ada"])
 
     assert account["total"] == 10000 and account["held"] == 2000 and account["available"] == 8000
     assert wallet_amount(document) == 10000
@@ -96,14 +96,14 @@ def test_money_formatting_with_zero_minor_units(login_browser, api, reset):
     assert testid_text(document, "wallet-available") == "1200 JPY"
 
 
-def test_wallet_available_is_derived_not_negative(login_browser, api, ada_token, reset):
+def test_wallet_available_is_derived_not_negative(login_browser, api, reset, seed):
     # A hold larger than the wallet is a reset error, so the API never exposes a
     # negative available amount. With a 9000 hold on a 10000 wallet, 1000 remains.
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 9000)]))
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 9000)]))
     browser, _ = login_browser("ada")
     document = parse_html(browser.get("/", accept="text/html").text)
     assert wallet_amount(document, "wallet-available") == 1000
-    assert me(api, ada_token)["available"] == 1000
+    assert me(api, tokens["ada"])["available"] == 1000
 
 
 # --------------------------------------------------------------------------- #
@@ -136,12 +136,12 @@ def test_pay_receiver_sees_the_payment_and_new_balance(login_browser, api, ada_t
     assert len(testids_in_order(document)) > 0
 
 
-def test_available_based_insufficient_funds_negative(login_browser, api, ada_token, reset):
-    reset(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
+def test_available_based_insufficient_funds_negative(login_browser, api, reset, seed):
+    tokens = seed(make_fixture(authorizations=[seeded_authorization("a_1", "u_ada", "u_bob", 2000)]))
     browser, _ = login_browser("ada")
 
     # total is 10000 but only 8000 is available, so 8500 is refused.
-    refused = make_payment(api, ada_token, "bob", 8500)
+    refused = make_payment(api, tokens["ada"], "bob", 8500)
     expect(refused, 409, "insufficient_funds")
 
     document = parse_html(browser.get("/", accept="text/html").text)
@@ -150,9 +150,9 @@ def test_available_based_insufficient_funds_negative(login_browser, api, ada_tok
     assert not has_any_activity(document)
 
     # Exactly the available amount is accepted.
-    ok = make_payment(api, ada_token, "bob", 8000)
+    ok = make_payment(api, tokens["ada"], "bob", 8000)
     expect(ok, 201)
-    account = me(api, ada_token)
+    account = me(api, tokens["ada"])
     assert account["total"] == 2000 and account["held"] == 2000 and account["available"] == 0
 
 
@@ -187,8 +187,8 @@ def test_request_screen_reflects_incoming_and_outgoing_per_party(
     assert_absent(document, f"request-cancel-{rid}")
 
 
-def test_request_creator_sees_cancel_not_pay(login_browser, api, bob_token, reset):
-    reset(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200)]))
+def test_request_creator_sees_cancel_not_pay(login_browser, api, reset, seed):
+    tokens = seed(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200)]))
     browser, _ = login_browser("bob")
     document = parse_html(browser.get("/requests", accept="text/html").text)
     require_testid(document, "request-item-rq_1")
@@ -197,13 +197,11 @@ def test_request_creator_sees_cancel_not_pay(login_browser, api, bob_token, rese
     assert_absent(document, "request-decline-rq_1")
 
 
-def test_paying_request_via_api_updates_screen_and_balances(
-    login_browser, api, ada_token, bob_token, reset
-):
-    reset(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200, "taxi")]))
+def test_paying_request_via_api_updates_screen_and_balances(login_browser, api, reset, seed):
+    tokens = seed(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200, "taxi")]))
     pay = api.post(
         "/requests/rq_1/pay",
-        token=ada_token,
+        token=tokens["ada"],
         idem=unique("rqpay"),
         body={"visibility": "private"},
     )
@@ -222,8 +220,8 @@ def test_paying_request_via_api_updates_screen_and_balances(
     wallet = parse_html(browser.get("/", accept="text/html").text)
     assert testid_text(wallet, f"activity-amount-{pid}") == "12.00 EUR"
 
-    assert me(api, ada_token)["total"] == 8800
-    assert me(api, bob_token)["total"] == 3700
+    assert me(api, tokens["ada"])["total"] == 8800
+    assert me(api, tokens["bob"])["total"] == 3700
 
 
 # --------------------------------------------------------------------------- #
@@ -281,22 +279,20 @@ def test_activity_note_round_trips_unicode(login_browser, api, ada_token):
     assert note in testid_text(document, f"activity-note-{payment['payment_id']}")
 
 
-def test_request_cancelled_elsewhere_refreshes_to_terminal_state(
-    login_browser, api, ada_token, bob_token, reset
-):
-    reset(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200)]))
+def test_request_cancelled_elsewhere_refreshes_to_terminal_state(login_browser, api, reset, seed):
+    tokens = seed(make_fixture(request_list=[seeded_request("rq_1", "u_bob", "u_ada", 1200)]))
     browser, _ = login_browser("ada")
     document = parse_html(browser.get("/requests", accept="text/html").text)
     require_testid(document, "request-pay-rq_1")
 
     # The requester cancels from another client while this browser shows the button.
-    expect(api.post("/requests/rq_1/cancel", token=bob_token), 200)
+    expect(api.post("/requests/rq_1/cancel", token=tokens["bob"]), 200)
     document = parse_html(browser.get("/requests", accept="text/html").text)
     assert require_testid(document, "request-item-rq_1").attrs.get("data-status") == "cancelled"
     assert_absent(document, "request-pay-rq_1")
     assert_absent(document, "request-decline-rq_1")
 
     # Paying the stale request is refused and moves nothing.
-    refused = api.post("/requests/rq_1/pay", token=ada_token, idem=unique("stale"), body={})
+    refused = api.post("/requests/rq_1/pay", token=tokens["ada"], idem=unique("stale"), body={})
     expect(refused, 409, "request_not_pending")
-    assert me(api, ada_token)["total"] == 10000
+    assert me(api, tokens["ada"])["total"] == 10000
