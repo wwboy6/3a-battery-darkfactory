@@ -45,7 +45,7 @@ def test_available_and_held_are_formatted_with_data_amount(signed_in, reset):
     reset(
         make_fixture(
             authorizations=[
-                seeded_authorization("a_hold", "u_ada", "u_bob", 2000, expires_at=iso(3600))
+                seeded_authorization("a_hold", "u_ada", "u_bob", 2000, expires_at=iso(7200))
             ]
         )
     )

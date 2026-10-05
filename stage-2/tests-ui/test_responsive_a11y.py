@@ -36,8 +36,8 @@ def test_no_horizontal_scroll_with_holds_at_375px(signed_in, reset):
     reset(
         make_fixture(
             authorizations=[
-                seeded_authorization("a_in", "u_bob", "u_ada", 2000, expires_at=iso(3600)),
-                seeded_authorization("a_out", "u_ada", "u_bob", 3000, expires_at=iso(3600)),
+                seeded_authorization("a_in", "u_bob", "u_ada", 2000, expires_at=iso(7200)),
+                seeded_authorization("a_out", "u_ada", "u_bob", 3000, expires_at=iso(7200)),
             ]
         )
     )

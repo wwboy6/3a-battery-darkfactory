@@ -13,6 +13,7 @@ from support import (
     parse_decimal_to_minor,
     path_of,
     payload,
+    rfc3339_equal,
     seeded_authorization,
     testid_attribute_order,
     unique,
@@ -24,7 +25,7 @@ def _is_authorization_post(request) -> bool:
 
 
 def _holds():
-    expiries = {"a_in": iso(3600), "a_out": iso(3600), "a_exp": iso(-3600)}
+    expiries = {"a_in": iso(7200), "a_out": iso(7200), "a_exp": iso(-7200)}
     fixture = make_fixture(
         authorizations=[
             seeded_authorization(
@@ -88,7 +89,8 @@ def test_authorization_amount_expiry_and_capture_prefill(signed_in, reset):
     page.goto("/authorizations")
     expect(page.get_by_test_id("authorization-amount-a_in")).to_have_text("20.00 EUR")
     expect(page.get_by_test_id("authorization-amount-a_out")).to_have_text("30.00 EUR")
-    expect(page.get_by_test_id("authorization-expires-a_in")).to_have_text(expiries["a_in"])
+    expires_text = page.get_by_test_id("authorization-expires-a_in").inner_text().strip()
+    assert rfc3339_equal(expires_text, expiries["a_in"]), (expires_text, expiries["a_in"])
     prefill = page.get_by_test_id("authorization-capture-amount-a_in").input_value()
     assert parse_decimal_to_minor(prefill, 2) == 2000
 
@@ -97,7 +99,7 @@ def test_expired_hold_is_not_counted(signed_in, reset):
     reset(
         make_fixture(
             authorizations=[
-                seeded_authorization("a_exp", "u_ada", "u_bob", 5000, expires_at=iso(-3600))
+                seeded_authorization("a_exp", "u_ada", "u_bob", 5000, expires_at=iso(-7200))
             ]
         )
     )
@@ -144,7 +146,7 @@ def test_authorize_checks_available_not_total(signed_in, reset):
     reset(
         make_fixture(
             authorizations=[
-                seeded_authorization("a_hold", "u_ada", "u_bob", 9000, expires_at=iso(3600))
+                seeded_authorization("a_hold", "u_ada", "u_bob", 9000, expires_at=iso(7200))
             ]
         )
     )

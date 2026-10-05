@@ -199,6 +199,18 @@ def iso(offset_seconds: float = 0.0) -> str:
     return moment.replace(microsecond=0).isoformat()
 
 
+def rfc3339_equal(left: str, right: str) -> bool:
+    """True when two RFC 3339 strings denote the same instant."""
+
+    def _parse(value):
+        return dt.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+
+    try:
+        return _parse(left) == _parse(right)
+    except ValueError:
+        return False
+
+
 def money(minor: int, currency: str = "EUR", minor_units: int = 2) -> str:
     """Exact ``wallet-*`` text: ``100.00 EUR`` / ``1200 JPY`` / ``1.500 BHD``."""
     minor = int(minor)

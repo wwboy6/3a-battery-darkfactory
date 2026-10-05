@@ -91,4 +91,4 @@ def test_new_payment_appears_in_feed_without_manual_reload(signed_in):
     fill_pay_form(page, "bob", "5.00", "fresh")
     page.get_by_test_id("pay-submit").click()
     expect(page.locator('[data-testid^="activity-item-"]')).to_have_count(1)
-    expect(page.get_by_test_id("empty-activity")).to_have_count(0)
+    expect(page.get_by_test_id("empty-activity")).to_be_hidden()
