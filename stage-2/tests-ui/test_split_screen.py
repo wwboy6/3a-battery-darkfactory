@@ -2,11 +2,11 @@
 
 from playwright.sync_api import expect
 
-from support import path_of, payload
+from support import is_post_to, payload
 
 
-def _is_split_post(request) -> bool:
-    return request.method == "POST" and path_of(request.url) == "/splits"
+def _is_split_post(target) -> bool:
+    return is_post_to(target, "/splits")
 
 
 def _fill_split(page, amount, handles, note="dinner"):

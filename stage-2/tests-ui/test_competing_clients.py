@@ -4,11 +4,11 @@ import time
 
 from playwright.sync_api import expect
 
-from support import api_login, fill_pay_form, path_of, unique
+from support import api_login, fill_pay_form, is_post_to, unique
 
 
-def _is_payment_post(request) -> bool:
-    return request.method == "POST" and path_of(request.url) == "/payments"
+def _is_payment_post(target) -> bool:
+    return is_post_to(target, "/payments")
 
 
 def test_wallet_refresh_latest_wins(signed_in, api):

@@ -308,12 +308,23 @@ def path_of(url: str) -> str:
     return urlparse(url).path
 
 
-def testids_starting_with(page, prefix: str):
+def is_post_to(target, path: str) -> bool:
+    """True when a Playwright Request or Response is a POST to ``path``.
+
+    ``page.expect_response`` passes a Response while ``page.on("request")``
+    passes a Request, so accept either (a Response exposes the originating
+    request as ``.request``).
+    """
+    request = getattr(target, "request", target)
+    return request.method == "POST" and path_of(request.url) == path
+
+
+def locator_by_prefix(page, prefix: str):
     return page.locator(f'[data-testid^="{prefix}"]')
 
 
-def testid_attribute_order(page, prefix: str):
-    return testids_starting_with(page, prefix).evaluate_all(
+def dom_testid_order(page, prefix: str):
+    return locator_by_prefix(page, prefix).evaluate_all(
         "els => els.map(e => e.getAttribute('data-testid'))"
     )
 

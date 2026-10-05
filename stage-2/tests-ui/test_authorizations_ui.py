@@ -6,22 +6,22 @@ from playwright.sync_api import expect
 
 from support import (
     api_login,
+    dom_testid_order,
     ensure_authorize_form,
     fill_authorize_form,
     iso,
+    is_post_to,
     make_fixture,
     parse_decimal_to_minor,
-    path_of,
     payload,
     rfc3339_equal,
     seeded_authorization,
-    testid_attribute_order,
     unique,
 )
 
 
-def _is_authorization_post(request) -> bool:
-    return request.method == "POST" and path_of(request.url) == "/authorizations"
+def _is_authorization_post(target) -> bool:
+    return is_post_to(target, "/authorizations")
 
 
 def _holds():
@@ -271,7 +271,7 @@ def test_authorization_list_is_newest_first(signed_in, api):
 
     page = signed_in("ada")
     page.goto("/authorizations")
-    order = testid_attribute_order(page, "authorization-item-")
+    order = dom_testid_order(page, "authorization-item-")
     assert order[:2] == [
         f"authorization-item-{second['authorization_id']}",
         f"authorization-item-{first['authorization_id']}",

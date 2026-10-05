@@ -3,11 +3,11 @@
 import pytest
 from playwright.sync_api import expect
 
-from support import fill_request_form, path_of, payload
+from support import fill_request_form, is_post_to, payload
 
 
-def _is_request_post(request) -> bool:
-    return request.method == "POST" and path_of(request.url) == "/requests"
+def _is_request_post(target) -> bool:
+    return is_post_to(target, "/requests")
 
 
 def test_request_creates_a_pending_outgoing_request(signed_in):

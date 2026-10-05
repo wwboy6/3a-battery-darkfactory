@@ -6,10 +6,10 @@ from playwright.sync_api import expect
 
 from support import (
     api_login,
+    dom_testid_order,
     fill_pay_form,
     make_fixture,
     seeded_payment,
-    testid_attribute_order,
     unique,
 )
 
@@ -32,7 +32,7 @@ def test_feed_is_newest_first(signed_in, api):
 
     page = signed_in("ada")
     page.goto("/")
-    order = testid_attribute_order(page, "activity-item-")
+    order = dom_testid_order(page, "activity-item-")
     assert order == [f"activity-item-{second['payment_id']}", f"activity-item-{first['payment_id']}"]
 
 

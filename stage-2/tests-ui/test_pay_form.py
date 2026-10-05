@@ -5,16 +5,16 @@ from playwright.sync_api import expect
 
 from support import (
     fill_pay_form,
+    is_post_to,
     make_fixture,
-    path_of,
     payload,
     user,
     wallet_text,
 )
 
 
-def _is_payment_post(request) -> bool:
-    return request.method == "POST" and path_of(request.url) == "/payments"
+def _is_payment_post(target) -> bool:
+    return is_post_to(target, "/payments")
 
 
 @pytest.mark.parametrize(
